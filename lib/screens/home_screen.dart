@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
@@ -24,7 +25,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  static const String _backendBaseUrl = 'https://your-vercel-domain.vercel.app';
+  static const String _backendBaseUrl = 'https://truth-stamp.vercel.app';
 
   final MetadataService _metadataService = const MetadataService();
   final CryptoService _cryptoService = const CryptoService();
@@ -65,20 +66,20 @@ class _HomeScreenState extends State<HomeScreen> {
 
   bool get _isBusy => _loadingMessage != null;
 
+  /// 没有相机（iOS 模拟器）时自动进入 Mock 模式。
+  bool get _isMockMode => widget.cameras.isEmpty;
+
   String _verificationUrlForHash(String hash) {
     return Uri.parse('$_backendBaseUrl/api/verify')
-        .replace(queryParameters: <String, String>{'hash': hash})
-        .toString();
+        .replace(queryParameters: <String, String>{'hash': hash}).toString();
   }
 
   Future<void> _initializeCamera() async {
     if (widget.cameras.isEmpty) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
+      // Mock 模式：无相机时不报错，直接进入模拟器占位界面。
       setState(() {
         _isInitializingCamera = false;
-        _errorMessage = 'No camera was found on this device.';
       });
       return;
     }
@@ -137,7 +138,8 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       setState(() {
         _isInitializingCamera = false;
-        _errorMessage = 'Failed to initialize camera: ${error.description ?? error.code}';
+        _errorMessage =
+            'Failed to initialize camera: ${error.description ?? error.code}';
       });
     } on Exception catch (error) {
       await controller.dispose();
@@ -148,6 +150,67 @@ class _HomeScreenState extends State<HomeScreen> {
         _isInitializingCamera = false;
         _errorMessage = 'Failed to initialize camera: $error';
       });
+    }
+  }
+
+  /// Mock 模式：生成虚假图片字节 + 固定测试元数据，走完整的哈希 + 上传流程。
+  Future<void> _mockCaptureAndUpload() async {
+    if (_isBusy) return;
+
+    setState(() {
+      _loadingMessage = '模拟拍照并计算哈希...';
+      _errorMessage = null;
+      _uploadError = null;
+      _uploadSucceeded = false;
+      _capturedImageBytes = null;
+      _capturedMetadata = null;
+      _capturedHash = null;
+    });
+
+    try {
+      // 生成每次唯一的虚假图片字节（内含时间戳，保证哈希不重复）。
+      final timestamp =
+          DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
+      final fakeImageBytes = Uint8List.fromList(
+        utf8.encode('TruthStamp-MockImage-$timestamp'),
+      );
+
+      const mockMetadata = <String, dynamic>{
+        'latitude': 31.23,
+        'longitude': 121.47,
+        'accuracy': 10.0,
+      };
+      final metadata = <String, dynamic>{
+        ...mockMetadata,
+        'timestamp': timestamp,
+      };
+
+      final hash = _cryptoService.calculateSha256(
+        imageBytes: fakeImageBytes,
+        metadata: metadata,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _capturedImageBytes = fakeImageBytes;
+        _capturedMetadata = metadata;
+        _capturedHash = hash;
+        _loadingMessage = '正在同步至云端...';
+      });
+
+      await _uploadCurrentStamp();
+    } on Exception catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = 'Mock capture failed: $error';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loadingMessage = null;
+        });
+      }
     }
   }
 
@@ -190,7 +253,8 @@ class _HomeScreenState extends State<HomeScreen> {
         return;
       }
       setState(() {
-        _errorMessage = 'Failed to capture photo: ${error.description ?? error.code}';
+        _errorMessage =
+            'Failed to capture photo: ${error.description ?? error.code}';
       });
     } on Exception catch (error) {
       if (!mounted) {
@@ -239,7 +303,8 @@ class _HomeScreenState extends State<HomeScreen> {
           .timeout(const Duration(seconds: 15));
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw Exception(_extractUploadError(response.body, response.statusCode));
+        throw Exception(
+            _extractUploadError(response.body, response.statusCode));
       }
 
       if (!mounted) {
@@ -350,6 +415,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildPreview() {
     if (_capturedImageBytes != null) {
+      // Mock 模式的"图片"只是字节流，不是真实图片，直接显示占位。
+      if (_isMockMode) {
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(24),
+          child: _buildMockPlaceholder(label: '模拟照片已生成'),
+        );
+      }
       return ClipRRect(
         borderRadius: BorderRadius.circular(24),
         child: Image.memory(
@@ -361,6 +433,13 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
+    if (_isMockMode) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: _buildMockPlaceholder(label: '模拟器模式 · 无实体相机'),
+      );
+    }
+
     final controller = _cameraController;
     if (controller == null || !controller.value.isInitialized) {
       return const Center(child: CircularProgressIndicator());
@@ -369,6 +448,33 @@ class _HomeScreenState extends State<HomeScreen> {
     return ClipRRect(
       borderRadius: BorderRadius.circular(24),
       child: CameraPreview(controller),
+    );
+  }
+
+  Widget _buildMockPlaceholder({required String label}) {
+    return Container(
+      width: double.infinity,
+      height: double.infinity,
+      color: const Color(0xFF2A2A2A),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.camera_alt_outlined,
+            size: 56,
+            color: Colors.white.withOpacity(0.35),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            label,
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.55),
+              fontSize: 14,
+              letterSpacing: 0.4,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -435,8 +541,12 @@ class _HomeScreenState extends State<HomeScreen> {
             Row(
               children: [
                 Icon(
-                  _uploadSucceeded ? Icons.verified_rounded : Icons.hourglass_bottom_rounded,
-                  color: _uploadSucceeded ? Colors.green : Theme.of(context).colorScheme.primary,
+                  _uploadSucceeded
+                      ? Icons.verified_rounded
+                      : Icons.hourglass_bottom_rounded,
+                  color: _uploadSucceeded
+                      ? Colors.green
+                      : Theme.of(context).colorScheme.primary,
                 ),
                 const SizedBox(width: 8),
                 Text(
@@ -455,7 +565,7 @@ class _HomeScreenState extends State<HomeScreen> {
             _buildInfoRow(
               '经纬度',
               '${_formatNumber((metadata['latitude'] as num).toDouble())}, '
-              '${_formatNumber((metadata['longitude'] as num).toDouble())}',
+                  '${_formatNumber((metadata['longitude'] as num).toDouble())}',
             ),
             const SizedBox(height: 12),
             _buildInfoRow(
@@ -557,6 +667,34 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildActions() {
+    // ── Mock 模式（模拟器，无相机）──────────────────────────
+    if (_isMockMode) {
+      if (_capturedHash == null) {
+        return FilledButton.icon(
+          onPressed: _isBusy ? null : _mockCaptureAndUpload,
+          icon: const Icon(Icons.science_outlined),
+          label: const Text('模拟拍照并上传 (Mock)'),
+        );
+      }
+      return Row(
+        children: [
+          Expanded(
+            child: FilledButton.icon(
+              onPressed: _isBusy ? null : _mockCaptureAndUpload,
+              icon: const Icon(Icons.science_outlined),
+              label: const Text('重新模拟'),
+            ),
+          ),
+          const SizedBox(width: 12),
+          OutlinedButton(
+            onPressed: _isBusy ? null : _retake,
+            child: const Text('重置'),
+          ),
+        ],
+      );
+    }
+
+    // ── 正常相机模式 ─────────────────────────────────────
     if (_capturedHash == null) {
       return FilledButton.icon(
         onPressed: _isBusy ? null : _captureAndUpload,
@@ -663,7 +801,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Center(
                   child: Card(
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 24, vertical: 18),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [

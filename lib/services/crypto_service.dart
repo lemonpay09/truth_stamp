@@ -11,7 +11,8 @@ class CryptoService {
     required Map<String, dynamic> metadata,
   }) {
     if (imageBytes.isEmpty) {
-      throw ArgumentError.value(imageBytes, 'imageBytes', 'Image bytes cannot be empty.');
+      throw ArgumentError.value(
+          imageBytes, 'imageBytes', 'Image bytes cannot be empty.');
     }
 
     try {
