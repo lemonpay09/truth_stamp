@@ -1,0 +1,17 @@
+{
+  "name": "truth-stamp-backend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel deploy --prod"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "cors": "^2.8.5"
+  }
+}

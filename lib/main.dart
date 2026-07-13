@@ -1,0 +1,39 @@
+import 'package:camera/camera.dart';
+import 'package:flutter/material.dart';
+
+import 'screens/home_screen.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  List<CameraDescription> cameras = const [];
+  try {
+    cameras = await availableCameras();
+  } on CameraException catch (error) {
+    debugPrint('Failed to enumerate cameras: ${error.description ?? error.code}');
+  }
+
+  runApp(TruthStampApp(cameras: cameras));
+}
+
+class TruthStampApp extends StatelessWidget {
+  const TruthStampApp({
+    super.key,
+    required this.cameras,
+  });
+
+  final List<CameraDescription> cameras;
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Truth Stamp',
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2E7DFF)),
+        useMaterial3: true,
+      ),
+      home: HomeScreen(cameras: cameras),
+    );
+  }
+}

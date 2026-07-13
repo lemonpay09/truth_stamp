@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "routes": [
+    {
+      "src": "/api/upload",
+      "dest": "/api/upload.js"
+    },
+    {
+      "src": "/api/verify",
+      "dest": "/api/verify.js"
+    }
+  ]
+}
