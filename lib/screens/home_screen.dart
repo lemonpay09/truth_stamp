@@ -1,16 +1,20 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
+import 'dart:io';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
+import 'package:image/image.dart' as img;
+import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../services/crypto_service.dart';
+import '../services/exif_service.dart';
 import '../services/metadata_service.dart';
+import '../services/watermark_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
@@ -29,6 +33,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   final MetadataService _metadataService = const MetadataService();
   final CryptoService _cryptoService = const CryptoService();
+  final WatermarkService _watermarkService = const WatermarkService();
+  final ExifService _exifService = const ExifService();
   final http.Client _httpClient = http.Client();
 
   CameraController? _cameraController;
@@ -36,11 +42,13 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _loadingMessage;
   String? _errorMessage;
   String? _uploadError;
+  String? _saveError;
 
-  Uint8List? _capturedImageBytes;
+  File? _capturedImageFile;
   Map<String, dynamic>? _capturedMetadata;
   String? _capturedHash;
   bool _uploadSucceeded = false;
+  bool _gallerySaved = false;
 
   @override
   void initState() {
@@ -161,19 +169,19 @@ class _HomeScreenState extends State<HomeScreen> {
       _loadingMessage = '模拟拍照并计算哈希...';
       _errorMessage = null;
       _uploadError = null;
+      _saveError = null;
       _uploadSucceeded = false;
-      _capturedImageBytes = null;
+      _gallerySaved = false;
       _capturedMetadata = null;
       _capturedHash = null;
+      _capturedImageFile = null;
     });
 
     try {
-      // 生成每次唯一的虚假图片字节（内含时间戳，保证哈希不重复）。
       final timestamp =
           DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
-      final fakeImageBytes = Uint8List.fromList(
-        utf8.encode('TruthStamp-MockImage-$timestamp'),
-      );
+      final mockFile = await _createMockCaptureFile(timestamp);
+      final fakeImageBytes = await mockFile.readAsBytes();
 
       const mockMetadata = <String, dynamic>{
         'latitude': 31.23,
@@ -193,7 +201,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
 
       setState(() {
-        _capturedImageBytes = fakeImageBytes;
+        _capturedImageFile = mockFile;
         _capturedMetadata = metadata;
         _capturedHash = hash;
         _loadingMessage = '正在同步至云端...';
@@ -214,6 +222,29 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<File> _createMockCaptureFile(String timestamp) async {
+    final image = img.Image(width: 1600, height: 1200);
+    for (final pixel in image) {
+      final xRatio = pixel.x / image.width;
+      final yRatio = pixel.y / image.height;
+      pixel
+        ..r = (40 + 80 * xRatio).round()
+        ..g = (70 + 90 * yRatio).round()
+        ..b = (120 + 40 * (1 - xRatio)).round()
+        ..a = 255;
+    }
+
+    final encoded = img.encodePng(image);
+    final directory = await getTemporaryDirectory();
+    final file = File(
+      '${directory.path}/truth_stamp_mock_$timestamp.png'
+          .replaceAll(':', '-')
+          .replaceAll(' ', '_'),
+    );
+    await file.writeAsBytes(encoded, flush: true);
+    return file;
+  }
+
   Future<void> _captureAndUpload() async {
     final controller = _cameraController;
     if (controller == null || !controller.value.isInitialized || _isBusy) {
@@ -224,12 +255,16 @@ class _HomeScreenState extends State<HomeScreen> {
       _loadingMessage = '正在拍照并计算哈希...';
       _errorMessage = null;
       _uploadError = null;
+      _saveError = null;
       _uploadSucceeded = false;
+      _gallerySaved = false;
+      _capturedImageFile = null;
     });
 
     try {
       final photo = await controller.takePicture();
-      final photoBytes = await photo.readAsBytes();
+      final photoFile = File(photo.path);
+      final photoBytes = await photoFile.readAsBytes();
       final metadata = await _metadataService.collectMetadata();
       final hash = _cryptoService.calculateSha256(
         imageBytes: photoBytes,
@@ -241,7 +276,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
 
       setState(() {
-        _capturedImageBytes = photoBytes;
+        _capturedImageFile = photoFile;
         _capturedMetadata = metadata;
         _capturedHash = hash;
         _loadingMessage = '正在同步至云端...';
@@ -315,6 +350,8 @@ class _HomeScreenState extends State<HomeScreen> {
         _uploadSucceeded = true;
         _uploadError = null;
       });
+
+      await _protectAndSaveCapturedImage();
     } on TimeoutException {
       if (!mounted) {
         return;
@@ -346,6 +383,59 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _uploadSucceeded = false;
         _uploadError = '上传失败：$error';
+      });
+    }
+  }
+
+  Future<void> _protectAndSaveCapturedImage() async {
+    final sourceFile = _capturedImageFile;
+    final hash = _capturedHash;
+    final metadata = _capturedMetadata;
+    if (sourceFile == null || hash == null || metadata == null) {
+      if (!mounted) return;
+      setState(() {
+        _saveError = '缺少本地图片或元数据，无法保存防伪原图。';
+      });
+      return;
+    }
+
+    final verifyUrl = _verificationUrlForHash(hash);
+    if (mounted) {
+      setState(() {
+        _loadingMessage = '正在写入隐形水印并保存相册...';
+      });
+    }
+
+    try {
+      final watermarkedFile = await _watermarkService.embedInvisibleWatermark(
+        sourceFile,
+        verifyUrl,
+      );
+      final saved = await _exifService.secureAndSaveImage(
+        watermarkedFile,
+        hash,
+        verifyUrl,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _gallerySaved = saved;
+        _saveError = saved ? null : '双重防伪图片保存失败，请检查相册权限。';
+      });
+
+      if (saved) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('防伪原图已自动安全保存至系统相册'),
+          ),
+        );
+      }
+    } on Exception catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _gallerySaved = false;
+        _saveError = '保存防伪原图失败：$error';
       });
     }
   }
@@ -398,11 +488,13 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     setState(() {
-      _capturedImageBytes = null;
+      _capturedImageFile = null;
       _capturedMetadata = null;
       _capturedHash = null;
       _uploadError = null;
+      _saveError = null;
       _uploadSucceeded = false;
+      _gallerySaved = false;
       _errorMessage = null;
     });
   }
@@ -414,18 +506,11 @@ class _HomeScreenState extends State<HomeScreen> {
   String _formatNumber(double value) => value.toStringAsFixed(6);
 
   Widget _buildPreview() {
-    if (_capturedImageBytes != null) {
-      // Mock 模式的"图片"只是字节流，不是真实图片，直接显示占位。
-      if (_isMockMode) {
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(24),
-          child: _buildMockPlaceholder(label: '模拟照片已生成'),
-        );
-      }
+    if (_capturedImageFile != null) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(24),
-        child: Image.memory(
-          _capturedImageBytes!,
+        child: Image.file(
+          _capturedImageFile!,
           fit: BoxFit.cover,
           width: double.infinity,
           height: double.infinity,
@@ -479,7 +564,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildStatusCard() {
-    if (_uploadError == null) {
+    final isSaveError = _saveError != null;
+    final message = _saveError ?? _uploadError;
+    if (message == null) {
       return const SizedBox.shrink();
     }
 
@@ -492,7 +579,7 @@ class _HomeScreenState extends State<HomeScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '云端同步失败',
+              isSaveError ? '本地保存失败' : '云端同步失败',
               style: Theme.of(context).textTheme.titleSmall?.copyWith(
                     color: Theme.of(context).colorScheme.onErrorContainer,
                     fontWeight: FontWeight.w700,
@@ -500,7 +587,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              _uploadError!,
+              message,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: Theme.of(context).colorScheme.onErrorContainer,
                   ),
@@ -541,16 +628,18 @@ class _HomeScreenState extends State<HomeScreen> {
             Row(
               children: [
                 Icon(
-                  _uploadSucceeded
+                  _gallerySaved
                       ? Icons.verified_rounded
                       : Icons.hourglass_bottom_rounded,
-                  color: _uploadSucceeded
+                  color: _gallerySaved
                       ? Colors.green
                       : Theme.of(context).colorScheme.primary,
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  _uploadSucceeded ? '已同步至云端' : '本地时空指纹',
+                  _gallerySaved
+                      ? '已同步并保存至相册'
+                      : (_uploadSucceeded ? '云端已同步，正在保存至相册' : '本地时空指纹'),
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w700,
                       ),
