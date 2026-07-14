@@ -1,5 +1,5 @@
-import 'dart:convert';
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui';
@@ -37,19 +37,19 @@ class CameraTab extends StatefulWidget {
 
 enum _FlashChoice { auto, on, off }
 
-enum _TimerChoice { off, threeSeconds, tenSeconds }
+enum _TimerChoice { off, three, five, ten }
 
-enum _AspectChoice { fourThree, sixteenNine, oneOne }
+enum _AspectChoice { fourThree, oneOne, sixteenNine }
 
-extension on _AspectChoice {
+extension _AspectChoiceX on _AspectChoice {
   double get value {
     switch (this) {
       case _AspectChoice.fourThree:
         return 4 / 3;
-      case _AspectChoice.sixteenNine:
-        return 16 / 9;
       case _AspectChoice.oneOne:
         return 1;
+      case _AspectChoice.sixteenNine:
+        return 16 / 9;
     }
   }
 
@@ -57,15 +57,15 @@ extension on _AspectChoice {
     switch (this) {
       case _AspectChoice.fourThree:
         return '4:3';
-      case _AspectChoice.sixteenNine:
-        return '16:9';
       case _AspectChoice.oneOne:
         return '1:1';
+      case _AspectChoice.sixteenNine:
+        return '16:9';
     }
   }
 }
 
-class _CameraTabState extends State<CameraTab> {
+class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
   static const String _backendBaseUrl = 'https://truth-stamp.vercel.app';
 
   final MetadataService _metadataService = const MetadataService();
@@ -75,12 +75,18 @@ class _CameraTabState extends State<CameraTab> {
   final http.Client _httpClient = http.Client();
 
   CameraController? _cameraController;
-  int _currentCameraIndex = 0;
+  int _cameraIndex = 0;
 
   bool _isBusy = false;
   bool _isCountingDown = false;
-  String? _errorMessage;
+  bool _panelExpanded = false;
+  bool _gridVisible = false;
+  bool _nightMode = false;
+  bool _focusRingVisible = false;
+  bool _showCaptureSpinner = false;
+
   String? _loadingMessage;
+  String? _errorMessage;
 
   _FlashChoice _flashChoice = _FlashChoice.auto;
   _TimerChoice _timerChoice = _TimerChoice.off;
@@ -89,19 +95,30 @@ class _CameraTabState extends State<CameraTab> {
   double _zoomLevel = 1.0;
   double _minZoomLevel = 1.0;
   double _maxZoomLevel = 1.0;
-  double _scaleBaseZoom = 1.0;
+  double _zoomBase = 1.0;
 
   double _exposureOffset = 0.0;
   double _minExposureOffset = -2.0;
   double _maxExposureOffset = 2.0;
-  double _dragStartExposure = 0.0;
+  double _exposureBase = 0.0;
+  double? _nightModeSavedExposure;
 
   Offset? _focusPoint;
   double _focusOpacity = 0.0;
   Timer? _focusFadeTimer;
   Timer? _countdownTimer;
   int? _countdownRemaining;
-  bool _shutterFlashVisible = false;
+  DateTime? _lastLevelHaptic;
+
+  late final AnimationController _panelController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 260),
+  );
+
+  late final AnimationController _levelController = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 4),
+  )..repeat();
 
   @override
   void initState() {
@@ -121,6 +138,8 @@ class _CameraTabState extends State<CameraTab> {
   void dispose() {
     _focusFadeTimer?.cancel();
     _countdownTimer?.cancel();
+    _panelController.dispose();
+    _levelController.dispose();
     _httpClient.close();
     _cameraController?.dispose();
     super.dispose();
@@ -128,15 +147,18 @@ class _CameraTabState extends State<CameraTab> {
 
   bool get _isMockMode => widget.cameras.isEmpty;
 
+  bool get _cameraReady =>
+      _cameraController != null && _cameraController!.value.isInitialized;
+
   CameraDescription? get _selectedCamera {
     if (widget.cameras.isEmpty) return null;
-    if (_currentCameraIndex < widget.cameras.length) {
-      return widget.cameras[_currentCameraIndex];
+    if (_cameraIndex >= 0 && _cameraIndex < widget.cameras.length) {
+      return widget.cameras[_cameraIndex];
     }
     return widget.cameras.first;
   }
 
-  double get _captureAspectRatio => _aspectChoice.value;
+  double get _aspectValue => _aspectChoice.value;
 
   String _verificationUrlForHash(String hash) {
     return Uri.parse('$_backendBaseUrl/api/verify')
@@ -147,19 +169,17 @@ class _CameraTabState extends State<CameraTab> {
   Future<void> _initializeCamera() async {
     if (widget.cameras.isEmpty) {
       if (!mounted) return;
-      setState(() {
-        _errorMessage = null;
-      });
+      setState(() => _errorMessage = null);
       return;
     }
 
     final permission = await Permission.camera.status;
     if (!permission.isGranted) {
-      final result = await Permission.camera.request();
-      if (!result.isGranted) {
+      final request = await Permission.camera.request();
+      if (!request.isGranted) {
         if (!mounted) return;
         setState(() {
-          _errorMessage = result.isPermanentlyDenied
+          _errorMessage = request.isPermanentlyDenied
               ? 'Camera permission is permanently denied. Please enable it in Settings.'
               : 'Camera permission is required to use the camera.';
         });
@@ -167,17 +187,15 @@ class _CameraTabState extends State<CameraTab> {
       }
     }
 
-    final selectedCamera = _selectedCamera;
-    if (selectedCamera == null) {
+    final selected = _selectedCamera;
+    if (selected == null) {
       if (!mounted) return;
-      setState(() {
-        _errorMessage = 'No usable camera was found on this device.';
-      });
+      setState(() => _errorMessage = 'No usable camera was found on this device.');
       return;
     }
 
     final controller = CameraController(
-      selectedCamera,
+      selected,
       ResolutionPreset.high,
       enableAudio: false,
     );
@@ -196,8 +214,10 @@ class _CameraTabState extends State<CameraTab> {
         _cameraController = controller;
         _errorMessage = null;
       });
-
       await _safeSetFlashMode(_flashChoice);
+      if (_nightMode) {
+        await _applyNightMode(true, fromInitialization: true);
+      }
     } on CameraException catch (error) {
       await controller.dispose();
       if (!mounted) return;
@@ -208,9 +228,7 @@ class _CameraTabState extends State<CameraTab> {
     } on Exception catch (error) {
       await controller.dispose();
       if (!mounted) return;
-      setState(() {
-        _errorMessage = 'Failed to initialize camera: $error';
-      });
+      setState(() => _errorMessage = 'Failed to initialize camera: $error');
     }
   }
 
@@ -245,13 +263,13 @@ class _CameraTabState extends State<CameraTab> {
     try {
       await controller.setZoomLevel(_zoomLevel);
     } on Exception {
-      // Ignore unsupported zoom control.
+      // Ignore unsupported zoom.
     }
 
     try {
       await controller.setExposureOffset(_exposureOffset);
     } on Exception {
-      // Ignore unsupported exposure control.
+      // Ignore unsupported exposure.
     }
   }
 
@@ -268,12 +286,6 @@ class _CameraTabState extends State<CameraTab> {
       await controller.setFlashMode(mode);
       if (!mounted) return;
       setState(() => _flashChoice = choice);
-    } on CameraException catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _errorMessage =
-            'Flash mode is unavailable: ${error.description ?? error.code}';
-      });
     } on Exception catch (error) {
       if (!mounted) return;
       setState(() {
@@ -293,31 +305,9 @@ class _CameraTabState extends State<CameraTab> {
       await controller.setZoomLevel(clamped);
       if (!mounted) return;
       setState(() => _zoomLevel = clamped);
-    } on CameraException catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _errorMessage =
-            'Zoom control is unavailable: ${error.description ?? error.code}';
-      });
     } on Exception catch (error) {
       if (!mounted) return;
-      setState(() {
-        _errorMessage = 'Zoom control is unavailable: $error';
-      });
-    }
-  }
-
-  Future<void> _setZoomPreset(double preset) async {
-    final controller = _cameraController;
-    if (controller == null || !controller.value.isInitialized) return;
-
-    final clamped = preset.clamp(_minZoomLevel, _maxZoomLevel);
-    final start = _zoomLevel;
-    const steps = 8;
-    for (var i = 1; i <= steps; i++) {
-      final next = start + (clamped - start) * (i / steps);
-      await _safeSetZoomLevel(next);
-      await Future<void>.delayed(const Duration(milliseconds: 18));
+      setState(() => _errorMessage = 'Zoom control is unavailable: $error');
     }
   }
 
@@ -332,17 +322,9 @@ class _CameraTabState extends State<CameraTab> {
       await controller.setExposureOffset(clamped);
       if (!mounted) return;
       setState(() => _exposureOffset = clamped);
-    } on CameraException catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _errorMessage =
-            'Exposure control is unavailable: ${error.description ?? error.code}';
-      });
     } on Exception catch (error) {
       if (!mounted) return;
-      setState(() {
-        _errorMessage = 'Exposure control is unavailable: $error';
-      });
+      setState(() => _errorMessage = 'Exposure control is unavailable: $error');
     }
   }
 
@@ -352,27 +334,14 @@ class _CameraTabState extends State<CameraTab> {
 
     try {
       await controller.setFocusPoint(normalizedPoint);
-    } on CameraException catch (error) {
-      if (mounted) {
-        setState(() {
-          _errorMessage =
-              'Focus control is unavailable: ${error.description ?? error.code}';
-        });
-      }
-    } on Exception catch (error) {
-      if (mounted) {
-        setState(() {
-          _errorMessage = 'Focus control is unavailable: $error';
-        });
-      }
+    } on Exception catch (_) {
+      // Some devices do not support focus point.
     }
 
     try {
       await controller.setExposurePoint(normalizedPoint);
-    } on CameraException catch (_) {
-      // Some devices only support focus point.
-    } on Exception {
-      // Some devices only support focus point.
+    } on Exception catch (_) {
+      // Some devices do not support exposure point.
     }
   }
 
@@ -382,101 +351,346 @@ class _CameraTabState extends State<CameraTab> {
     final current = _selectedCamera;
     if (current == null) return;
 
-    final nextIndex = widget.cameras.indexWhere(
-      (camera) => camera.lensDirection != current.lensDirection,
-    );
-    if (nextIndex == -1) return;
+    final back = widget.cameras
+        .indexWhere((camera) => camera.lensDirection == CameraLensDirection.back);
+    final front = widget.cameras
+        .indexWhere((camera) => camera.lensDirection == CameraLensDirection.front);
+    final targetIndex = current.lensDirection == CameraLensDirection.back
+        ? (front == -1 ? _cameraIndex : front)
+        : (back == -1 ? _cameraIndex : back);
 
-    setState(() {
-      _currentCameraIndex = nextIndex;
-    });
+    if (targetIndex == _cameraIndex) return;
+
+    setState(() => _cameraIndex = targetIndex);
     await _cameraController?.dispose();
     _cameraController = null;
     await _initializeCamera();
   }
 
-  void _showFocusIndicator(Offset point) {
+  void _resetFocusFadeTimer() {
     _focusFadeTimer?.cancel();
+    _focusFadeTimer = Timer(const Duration(seconds: 5), () {
+      if (!mounted) return;
+      setState(() {
+        _focusRingVisible = false;
+        _focusOpacity = 0.0;
+      });
+    });
+  }
+
+  void _presentFocusRing(Offset localPosition) {
+    final controller = _cameraController;
+    if (controller == null || !controller.value.isInitialized) return;
+
     setState(() {
-      _focusPoint = point;
+      _focusPoint = localPosition;
+      _focusRingVisible = true;
       _focusOpacity = 1.0;
     });
-    _focusFadeTimer = Timer(const Duration(milliseconds: 850), () {
-      if (!mounted) return;
-      setState(() => _focusOpacity = 0.15);
-    });
+    _resetFocusFadeTimer();
+    HapticFeedback.lightImpact();
   }
 
-  void _handleTapToFocus(
-    TapDownDetails details,
-    BoxConstraints constraints,
-  ) {
-    final controller = _cameraController;
-    if (controller == null || !controller.value.isInitialized || _isBusy) {
-      return;
-    }
-
-    final local = details.localPosition;
-    final normalized = Offset(
-      (local.dx / constraints.maxWidth).clamp(0.0, 1.0),
-      (local.dy / constraints.maxHeight).clamp(0.0, 1.0),
-    );
-
-    _showFocusIndicator(local);
-    _dragStartExposure = _exposureOffset;
-    unawaited(_safeSetFocusAndExposurePoint(normalized));
-  }
-
-  void _handleScaleStart(ScaleStartDetails details) {
+  void _applyFocusDrag(DragUpdateDetails details) {
     final controller = _cameraController;
     if (controller == null || !controller.value.isInitialized) return;
-    _scaleBaseZoom = _zoomLevel;
-  }
+    if (!_focusRingVisible || _focusPoint == null) return;
 
-  void _handleScaleUpdate(ScaleUpdateDetails details) {
-    final controller = _cameraController;
-    if (controller == null || !controller.value.isInitialized) return;
-    if (details.scale == 1.0) return;
-    unawaited(_safeSetZoomLevel(_scaleBaseZoom * details.scale));
-  }
-
-  void _handleFocusExposureDrag(DragUpdateDetails details) {
-    final controller = _cameraController;
-    if (controller == null || !controller.value.isInitialized) return;
     final delta = -details.primaryDelta!;
     final range = _maxExposureOffset - _minExposureOffset;
-    final next = _dragStartExposure + (delta * range / 240.0);
+    final next = _exposureBase + (delta * range / 220.0);
     unawaited(_safeSetExposureOffset(next));
+    _resetFocusFadeTimer();
+  }
+
+  void _onFocusDragStart() {
+    _exposureBase = _exposureOffset;
+  }
+
+  void _onScaleStart() {
+    _zoomBase = _zoomLevel;
+  }
+
+  void _onScaleUpdate(ScaleUpdateDetails details) {
+    if (!_cameraReady || details.scale == 1.0) return;
+    unawaited(_safeSetZoomLevel(_zoomBase * details.scale));
+  }
+
+  void _onVerticalSwipeEnd(DragEndDetails details) {
+    if (_focusRingVisible && _focusPoint != null) return;
+    final velocity = details.primaryVelocity ?? 0.0;
+    if (velocity < -150) {
+      _setPanelExpanded(true);
+    } else if (velocity > 150) {
+      _setPanelExpanded(false);
+    }
+  }
+
+  void _setPanelExpanded(bool expanded) {
+    if (_panelExpanded == expanded) return;
+    setState(() => _panelExpanded = expanded);
+    if (expanded) {
+      _panelController.forward();
+    } else {
+      _panelController.reverse();
+    }
+  }
+
+  void _togglePanel() => _setPanelExpanded(!_panelExpanded);
+
+  Future<void> _openFlashMenu() async {
+    final choice = await _showSelectionMenu<_FlashChoice>(
+      title: '闪光灯',
+      selected: _flashChoice,
+      entries: const [
+        _MenuEntry(
+          value: _FlashChoice.auto,
+          icon: CupertinoIcons.bolt_circle_fill,
+          title: '自动',
+          subtitle: 'Auto',
+        ),
+        _MenuEntry(
+          value: _FlashChoice.on,
+          icon: CupertinoIcons.bolt_fill,
+          title: '常开',
+          subtitle: 'On',
+        ),
+        _MenuEntry(
+          value: _FlashChoice.off,
+          icon: CupertinoIcons.bolt_slash_fill,
+          title: '关闭',
+          subtitle: 'Off',
+        ),
+      ],
+    );
+    if (choice != null) {
+      await _safeSetFlashMode(choice);
+    }
+  }
+
+  Future<void> _openTimerMenu() async {
+    final choice = await _showSelectionMenu<_TimerChoice>(
+      title: '计时器',
+      selected: _timerChoice,
+      entries: const [
+        _MenuEntry(
+          value: _TimerChoice.off,
+          icon: CupertinoIcons.clear_circled,
+          title: '关闭',
+          subtitle: 'Off',
+        ),
+        _MenuEntry(
+          value: _TimerChoice.three,
+          icon: CupertinoIcons.timer,
+          title: '3 秒',
+          subtitle: '3s',
+        ),
+        _MenuEntry(
+          value: _TimerChoice.five,
+          icon: CupertinoIcons.timer,
+          title: '5 秒',
+          subtitle: '5s',
+        ),
+        _MenuEntry(
+          value: _TimerChoice.ten,
+          icon: CupertinoIcons.timer,
+          title: '10 秒',
+          subtitle: '10s',
+        ),
+      ],
+    );
+    if (choice != null && mounted) {
+      setState(() => _timerChoice = choice);
+    }
+  }
+
+  Future<void> _openAspectMenu() async {
+    final choice = await _showSelectionMenu<_AspectChoice>(
+      title: '比例',
+      selected: _aspectChoice,
+      entries: const [
+        _MenuEntry(
+          value: _AspectChoice.fourThree,
+          icon: CupertinoIcons.crop,
+          title: '4:3',
+          subtitle: 'Classic',
+        ),
+        _MenuEntry(
+          value: _AspectChoice.oneOne,
+          icon: CupertinoIcons.square,
+          title: '1:1',
+          subtitle: 'Square',
+        ),
+        _MenuEntry(
+          value: _AspectChoice.sixteenNine,
+          icon: CupertinoIcons.rectangle,
+          title: '16:9',
+          subtitle: 'Wide',
+        ),
+      ],
+    );
+    if (choice != null && mounted) {
+      setState(() => _aspectChoice = choice);
+    }
+  }
+
+  Future<void> _openExposureSheet() async {
+    final controller = _cameraController;
+    if (controller == null || !controller.value.isInitialized) return;
+
+    final result = await showModalBottomSheet<double>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        double temp = _exposureOffset;
+        return Padding(
+          padding: EdgeInsets.only(
+            left: 16,
+            right: 16,
+            bottom: 16 + MediaQuery.of(sheetContext).viewInsets.bottom,
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(28),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+              child: Container(
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.14),
+                  border: Border.all(color: Colors.white.withOpacity(0.18)),
+                  borderRadius: BorderRadius.circular(28),
+                ),
+                child: StatefulBuilder(
+                  builder: (context, setModalState) {
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const Text(
+                          '曝光补偿',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'EV ${temp.toStringAsFixed(1)}',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.78),
+                            fontSize: 12,
+                          ),
+                        ),
+                        SliderTheme(
+                          data: SliderTheme.of(context).copyWith(
+                            trackHeight: 3,
+                            thumbShape: const RoundSliderThumbShape(
+                              enabledThumbRadius: 10,
+                            ),
+                            overlayShape: const RoundSliderOverlayShape(
+                              overlayRadius: 18,
+                            ),
+                          ),
+                          child: Slider(
+                            value: temp.clamp(_minExposureOffset, _maxExposureOffset),
+                            min: _minExposureOffset,
+                            max: _maxExposureOffset,
+                            onChanged: (value) {
+                              setModalState(() => temp = value);
+                              unawaited(_safeSetExposureOffset(value));
+                            },
+                          ),
+                        ),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton(
+                            onPressed: () => Navigator.of(sheetContext).pop(0.0),
+                            child: const Text('重置到 0'),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    if (result != null && mounted) {
+      await _safeSetExposureOffset(result);
+    }
+  }
+
+  Future<void> _toggleNightMode() async {
+    await _applyNightMode(!_nightMode);
+  }
+
+  Future<void> _applyNightMode(
+    bool enabled, {
+    bool fromInitialization = false,
+  }) async {
+    if (mounted) {
+      setState(() {
+        _nightMode = enabled;
+      });
+    } else {
+      _nightMode = enabled;
+    }
+
+    if (enabled) {
+      _nightModeSavedExposure ??= _exposureOffset;
+      final target = math.min(_maxExposureOffset, math.max(1.2, _maxExposureOffset * 0.75));
+      await _safeSetExposureOffset(target);
+      try {
+        await _safeSetFlashMode(_FlashChoice.off);
+      } catch (_) {
+        // ignore
+      }
+    } else if (!fromInitialization) {
+      final restore = _nightModeSavedExposure ?? 0.0;
+      _nightModeSavedExposure = null;
+      await _safeSetExposureOffset(restore);
+    }
+  }
+
+  void _toggleGrid() {
+    setState(() => _gridVisible = !_gridVisible);
   }
 
   Future<void> _handleCapturePressed() async {
     if (_isBusy || _isCountingDown) return;
-    if (_cameraController == null || !_cameraController!.value.isInitialized) {
+
+    if (_isMockMode) {
+      await _captureMockAndUpload();
       return;
     }
 
-    final delaySeconds = switch (_timerChoice) {
+    final delay = switch (_timerChoice) {
       _TimerChoice.off => 0,
-      _TimerChoice.threeSeconds => 3,
-      _TimerChoice.tenSeconds => 10,
+      _TimerChoice.three => 3,
+      _TimerChoice.five => 5,
+      _TimerChoice.ten => 10,
     };
 
-    if (delaySeconds <= 0) {
-      await _capturePipeline();
+    if (delay > 0) {
+      await _startCountdown(delay);
       return;
     }
 
-    await _startCountdown(delaySeconds);
+    await _capturePipeline();
   }
 
   Future<void> _startCountdown(int seconds) async {
-    final completer = Completer<void>();
-    int remaining = seconds;
-
+    if (_isBusy || _isCountingDown) return;
     setState(() {
       _isCountingDown = true;
-      _countdownRemaining = remaining;
-      _loadingMessage = null;
+      _countdownRemaining = seconds;
+      _errorMessage = null;
     });
 
     await HapticFeedback.lightImpact();
@@ -484,49 +698,93 @@ class _CameraTabState extends State<CameraTab> {
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
       if (!mounted) {
         timer.cancel();
-        if (!completer.isCompleted) completer.complete();
         return;
       }
 
-      remaining -= 1;
-      if (remaining > 0) {
-        setState(() => _countdownRemaining = remaining);
-        await HapticFeedback.selectionClick();
+      final next = (_countdownRemaining ?? seconds) - 1;
+      if (next <= 0) {
+        timer.cancel();
+        setState(() {
+          _countdownRemaining = null;
+          _isCountingDown = false;
+        });
+        await HapticFeedback.mediumImpact();
+        await _capturePipeline();
         return;
       }
 
-      timer.cancel();
-      setState(() {
-        _countdownRemaining = null;
-        _isCountingDown = false;
-      });
-      await HapticFeedback.mediumImpact();
-      await _capturePipeline();
-      if (!completer.isCompleted) completer.complete();
+      setState(() => _countdownRemaining = next);
+      await HapticFeedback.selectionClick();
+    });
+  }
+
+  Future<void> _captureMockAndUpload() async {
+    if (_isBusy) return;
+    setState(() {
+      _isBusy = true;
+      _loadingMessage = '正在模拟拍照并同步...';
+      _errorMessage = null;
+      _showCaptureSpinner = true;
     });
 
-    await completer.future;
+    try {
+      final timestamp = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
+      final mockFile = await _createMockCaptureFile(timestamp);
+      final bytes = await mockFile.readAsBytes();
+      final metadata = <String, dynamic>{
+        'timestamp': timestamp,
+        'latitude': 31.2304,
+        'longitude': 121.4737,
+        'accuracy': 10.0,
+      };
+      final hash = _cryptoService.calculateSha256(
+        imageBytes: bytes,
+        metadata: metadata,
+      );
+
+      setState(() => _loadingMessage = '正在同步至云端...');
+      await _uploadStamp(hash, metadata);
+      await _protectAndSaveCapturedImage(mockFile, hash);
+      await _persistHistory(mockFile, hash, metadata);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Mock capture synced successfully')),
+      );
+    } on Exception catch (error) {
+      if (!mounted) return;
+      setState(() => _errorMessage = 'Mock capture failed: $error');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isBusy = false;
+          _showCaptureSpinner = false;
+          _loadingMessage = null;
+        });
+      }
+    }
   }
 
   Future<void> _capturePipeline() async {
     final controller = _cameraController;
-    if (controller == null || !controller.value.isInitialized || _isBusy) {
-      return;
-    }
+    if (controller == null || !controller.value.isInitialized || _isBusy) return;
 
     setState(() {
       _isBusy = true;
-      _errorMessage = null;
       _loadingMessage = '正在拍照并同步...';
-      _shutterFlashVisible = true;
+      _showCaptureSpinner = true;
+      _errorMessage = null;
     });
 
     try {
-      await Future<void>.delayed(const Duration(milliseconds: 70));
+      if (_nightMode) {
+        await Future<void>.delayed(const Duration(milliseconds: 900));
+      }
+
       final shot = await controller.takePicture();
-      final photoFile = File(shot.path);
-      final croppedFile = await _cropPhotoToSelectedAspect(photoFile);
-      final photoBytes = await croppedFile.readAsBytes();
+      final sourceFile = File(shot.path);
+      final cropped = await _cropPhotoToSelectedAspect(sourceFile);
+      final bytes = await cropped.readAsBytes();
       final metadata = await _metadataService.collectMetadata();
       final normalizedMetadata = <String, dynamic>{
         ...metadata,
@@ -534,22 +792,19 @@ class _CameraTabState extends State<CameraTab> {
             DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now()),
       };
       final hash = _cryptoService.calculateSha256(
-        imageBytes: photoBytes,
+        imageBytes: bytes,
         metadata: normalizedMetadata,
       );
 
-      if (!mounted) return;
       setState(() => _loadingMessage = '正在同步至云端...');
-
       await _uploadStamp(hash, normalizedMetadata);
-      await _protectAndSaveCapturedImage(croppedFile, hash);
-      await _persistToHistory(croppedFile, hash, normalizedMetadata);
+      await _protectAndSaveCapturedImage(cropped, hash);
+      await _persistHistory(cropped, hash, normalizedMetadata);
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('拍照完成，已同步并保存到历史记录')),
-        );
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('拍照完成，已保存并同步')),
+      );
     } on CameraException catch (error) {
       if (!mounted) return;
       setState(() {
@@ -558,18 +813,39 @@ class _CameraTabState extends State<CameraTab> {
       });
     } on Exception catch (error) {
       if (!mounted) return;
-      setState(() {
-        _errorMessage = 'Capture failed: $error';
-      });
+      setState(() => _errorMessage = 'Capture failed: $error');
     } finally {
       if (mounted) {
         setState(() {
           _isBusy = false;
-          _shutterFlashVisible = false;
+          _showCaptureSpinner = false;
           _loadingMessage = null;
         });
       }
     }
+  }
+
+  Future<File> _createMockCaptureFile(String timestamp) async {
+    final image = img.Image(width: 1600, height: 1200);
+    for (final pixel in image) {
+      final x = pixel.x / image.width;
+      final y = pixel.y / image.height;
+      pixel
+        ..r = (32 + 90 * x).round()
+        ..g = (52 + 100 * y).round()
+        ..b = (110 + 55 * (1 - x)).round()
+        ..a = 255;
+    }
+
+    final encoded = img.encodeJpg(image, quality: 94);
+    final dir = await getTemporaryDirectory();
+    final file = File(
+      '${dir.path}/truth_stamp_mock_$timestamp.jpg'
+          .replaceAll(':', '-')
+          .replaceAll(' ', '_'),
+    );
+    await file.writeAsBytes(encoded, flush: true);
+    return file;
   }
 
   Future<File> _cropPhotoToSelectedAspect(File sourceFile) async {
@@ -577,16 +853,16 @@ class _CameraTabState extends State<CameraTab> {
     final decoded = img.decodeImage(bytes);
     if (decoded == null) return sourceFile;
 
-    final targetAspect = _captureAspectRatio;
+    final targetAspect = _aspectValue;
     final currentAspect = decoded.width / decoded.height;
     if ((currentAspect - targetAspect).abs() < 0.01) {
       return sourceFile;
     }
 
-    int cropX = 0;
-    int cropY = 0;
     int cropWidth = decoded.width;
     int cropHeight = decoded.height;
+    int cropX = 0;
+    int cropY = 0;
 
     if (currentAspect > targetAspect) {
       cropWidth = (decoded.height * targetAspect).round();
@@ -609,12 +885,12 @@ class _CameraTabState extends State<CameraTab> {
       height: cropHeight,
     );
 
-    final outputDirectory = await getTemporaryDirectory();
-    final outputFile = File(
-      '${outputDirectory.path}/truth_stamp_${DateTime.now().millisecondsSinceEpoch}.jpg',
+    final dir = await getTemporaryDirectory();
+    final out = File(
+      '${dir.path}/truth_stamp_${DateTime.now().millisecondsSinceEpoch}.jpg',
     );
-    await outputFile.writeAsBytes(img.encodeJpg(cropped, quality: 95), flush: true);
-    return outputFile;
+    await out.writeAsBytes(img.encodeJpg(cropped, quality: 95), flush: true);
+    return out;
   }
 
   Future<void> _uploadStamp(
@@ -638,30 +914,22 @@ class _CameraTabState extends State<CameraTab> {
         .timeout(const Duration(seconds: 15));
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw StateError(_extractUploadError(response.body, response.statusCode));
+      throw StateError(_extractError(response.body, response.statusCode));
     }
   }
 
-  Future<void> _protectAndSaveCapturedImage(
-    File sourceFile,
-    String hash,
-  ) async {
+  Future<void> _protectAndSaveCapturedImage(File sourceFile, String hash) async {
     final verifyUrl = _verificationUrlForHash(hash);
-    if (mounted) {
-      setState(() => _loadingMessage = '正在写入隐形水印并保存相册...');
-    }
-
     try {
-      final watermarkedFile = await _watermarkService.embedInvisibleWatermark(
+      final watermarked = await _watermarkService.embedInvisibleWatermark(
         sourceFile,
         verifyUrl,
       );
       final saved = await _exifService.secureAndSaveImage(
-        watermarkedFile,
+        watermarked,
         hash,
         verifyUrl,
       );
-
       if (!saved) {
         throw StateError('双重防伪图片保存失败，请检查相册权限。');
       }
@@ -671,7 +939,7 @@ class _CameraTabState extends State<CameraTab> {
     }
   }
 
-  Future<void> _persistToHistory(
+  Future<void> _persistHistory(
     File sourceFile,
     String hash,
     Map<String, dynamic> metadata,
@@ -693,23 +961,20 @@ class _CameraTabState extends State<CameraTab> {
     }
   }
 
-  String _extractUploadError(String body, int statusCode) {
+  String _extractError(String body, int statusCode) {
     if (body.trim().isEmpty) return 'HTTP $statusCode';
-
     try {
       final decoded = jsonDecode(body);
       if (decoded is Map<String, dynamic> && decoded['error'] is String) {
         return decoded['error'] as String;
       }
     } on FormatException {
-      // Fall through to raw body.
+      // Fallback below.
     }
-
     return body;
   }
 
-  Future<T?> _showGlassSelectionMenu<T>({
-    required BuildContext context,
+  Future<T?> _showSelectionMenu<T>({
     required String title,
     required List<_MenuEntry<T>> entries,
     required T selected,
@@ -718,15 +983,16 @@ class _CameraTabState extends State<CameraTab> {
       context: context,
       barrierDismissible: true,
       barrierLabel: title,
-      barrierColor: Colors.black.withOpacity(0.08),
+      barrierColor: Colors.black.withOpacity(0.10),
       transitionDuration: const Duration(milliseconds: 220),
       pageBuilder: (dialogContext, animation, secondaryAnimation) {
         return SafeArea(
           child: Stack(
             children: [
               Positioned(
+                left: 16,
                 right: 16,
-                top: 86,
+                top: 16,
                 child: Material(
                   color: Colors.transparent,
                   child: _GlassSelectionCard<T>(
@@ -750,7 +1016,7 @@ class _CameraTabState extends State<CameraTab> {
         return FadeTransition(
           opacity: curved,
           child: ScaleTransition(
-            scale: Tween<double>(begin: 0.94, end: 1.0).animate(curved),
+            scale: Tween<double>(begin: 0.96, end: 1).animate(curved),
             child: child,
           ),
         );
@@ -758,336 +1024,303 @@ class _CameraTabState extends State<CameraTab> {
     );
   }
 
-  Future<void> _openFlashMenu() async {
-    final choice = await _showGlassSelectionMenu<_FlashChoice>(
-      context: context,
-      title: '闪光灯',
-      entries: <_MenuEntry<_FlashChoice>>[
-        const _MenuEntry(
-          value: _FlashChoice.auto,
-          icon: CupertinoIcons.bolt_circle_fill,
-          title: '自动',
-          subtitle: 'Auto',
-        ),
-        const _MenuEntry(
-          value: _FlashChoice.on,
-          icon: CupertinoIcons.bolt_fill,
-          title: '常开',
-          subtitle: 'Always / On',
-        ),
-        const _MenuEntry(
-          value: _FlashChoice.off,
-          icon: CupertinoIcons.bolt_slash_fill,
-          title: '关闭',
-          subtitle: 'Off',
-        ),
-      ],
-      selected: _flashChoice,
-    );
-    if (choice != null) {
-      await _safeSetFlashMode(choice);
-    }
+  Future<void> _onArrowTapped() async {
+    _togglePanel();
+    await HapticFeedback.selectionClick();
   }
 
-  Future<void> _openTimerMenu() async {
-    final choice = await _showGlassSelectionMenu<_TimerChoice>(
-      context: context,
-      title: '延时拍照',
-      entries: <_MenuEntry<_TimerChoice>>[
-        const _MenuEntry(
-          value: _TimerChoice.off,
-          icon: CupertinoIcons.clear_circled,
-          title: '关闭',
-          subtitle: 'Off',
-        ),
-        const _MenuEntry(
-          value: _TimerChoice.threeSeconds,
-          icon: CupertinoIcons.timer,
-          title: '3 秒',
-          subtitle: '3 seconds',
-        ),
-        const _MenuEntry(
-          value: _TimerChoice.tenSeconds,
-          icon: CupertinoIcons.timer,
-          title: '10 秒',
-          subtitle: '10 seconds',
-        ),
-      ],
-      selected: _timerChoice,
-    );
-    if (choice != null && mounted) {
-      setState(() => _timerChoice = choice);
-    }
+  Future<void> _onPanelExposureTapped() async {
+    await _openExposureSheet();
   }
 
-  Future<void> _openAspectMenu() async {
-    final choice = await _showGlassSelectionMenu<_AspectChoice>(
-      context: context,
-      title: '比例切换',
-      entries: <_MenuEntry<_AspectChoice>>[
-        const _MenuEntry(
-          value: _AspectChoice.fourThree,
-          icon: CupertinoIcons.crop,
-          title: '4:3',
-          subtitle: 'Classic',
-        ),
-        const _MenuEntry(
-          value: _AspectChoice.sixteenNine,
-          icon: CupertinoIcons.rectangle,
-          title: '16:9',
-          subtitle: 'Wide',
-        ),
-        const _MenuEntry(
-          value: _AspectChoice.oneOne,
-          icon: CupertinoIcons.square,
-          title: '1:1',
-          subtitle: 'Square',
-        ),
-      ],
-      selected: _aspectChoice,
-    );
-    if (choice != null && mounted) {
-      setState(() => _aspectChoice = choice);
-    }
+  Future<void> _onNightTap() async {
+    await _toggleNightMode();
+    await HapticFeedback.lightImpact();
   }
 
-  String _flashLabel(_FlashChoice choice) {
-    return switch (choice) {
-      _FlashChoice.auto => 'Auto',
-      _FlashChoice.on => 'On',
-      _FlashChoice.off => 'Off',
-    };
-  }
-
-  String _timerLabel(_TimerChoice choice) {
-    return switch (choice) {
-      _TimerChoice.off => 'Off',
-      _TimerChoice.threeSeconds => '3s',
-      _TimerChoice.tenSeconds => '10s',
-    };
-  }
-
-  bool get _cameraReady =>
-      _cameraController != null && _cameraController!.value.isInitialized;
-
-  @override
-  Widget build(BuildContext context) {
-    final cameraReady = _cameraReady;
-
-    return Scaffold(
-      backgroundColor: const Color(0xFF050507),
-      body: SafeArea(
-        child: Column(
-          children: [
-            _buildTopBar(),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                child: _buildPreviewStage(cameraReady),
-              ),
-            ),
-            const SizedBox(height: 14),
-            _buildZoomRow(),
-            const SizedBox(height: 14),
-            _buildBottomControls(),
-            const SizedBox(height: 16),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTopBar() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
-      child: Row(
-        children: [
-          _GlassIconButton(
-            icon: CupertinoIcons.bolt_fill,
-            label: _flashLabel(_flashChoice),
-            onTap: _isCountingDown || _isBusy ? null : _openFlashMenu,
-          ),
-          const SizedBox(width: 10),
-          _GlassIconButton(
-            icon: CupertinoIcons.timer,
-            label: _timerLabel(_timerChoice),
-            onTap: _isCountingDown || _isBusy ? null : _openTimerMenu,
-          ),
-          const SizedBox(width: 10),
-          _GlassIconButton(
-            icon: CupertinoIcons.crop,
-            label: _aspectChoice.label,
-            onTap: _isCountingDown || _isBusy ? null : _openAspectMenu,
-          ),
-          const Spacer(),
-          _GlassIconButton(
-            icon: CupertinoIcons.camera_rotate_fill,
-            label: widget.cameras.length > 1 ? '切换' : '单摄',
-            onTap: _isCountingDown || _isBusy ? null : _switchCamera,
-            enabled: widget.cameras.length > 1,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPreviewStage(bool cameraReady) {
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 260),
-      transitionBuilder: (child, animation) {
-        final curved = CurvedAnimation(
-          parent: animation,
-          curve: Curves.easeOutCubic,
-          reverseCurve: Curves.easeInCubic,
+  Widget _buildStage() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final visibleHeight = math.min(
+          constraints.maxHeight,
+          constraints.maxWidth / _aspectValue,
         );
-        return FadeTransition(
-          opacity: curved,
-          child: ScaleTransition(scale: Tween<double>(begin: 0.98, end: 1).animate(curved), child: child),
+        final maskHeight = ((constraints.maxHeight - visibleHeight) / 2).clamp(
+          0.0,
+          constraints.maxHeight / 2,
+        );
+        final controller = _cameraController;
+        final previewAspect = controller?.value.aspectRatio ?? (4 / 3);
+
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapDown: (details) {
+            if (_isBusy || _isCountingDown) return;
+            _presentFocusRing(details.localPosition);
+            _exposureBase = _exposureOffset;
+            final normalized = Offset(
+              (details.localPosition.dx / constraints.maxWidth).clamp(0.0, 1.0),
+              (details.localPosition.dy / constraints.maxHeight).clamp(0.0, 1.0),
+            );
+            unawaited(_safeSetFocusAndExposurePoint(normalized));
+          },
+          onScaleStart: (_) => _onScaleStart(),
+          onScaleUpdate: _onScaleUpdate,
+          onVerticalDragStart: (_) => _onFocusDragStart(),
+          onVerticalDragUpdate: _applyFocusDrag,
+          onVerticalDragEnd: _onVerticalSwipeEnd,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Positioned.fill(child: _buildPreviewContent(previewAspect)),
+              AnimatedPositioned(
+                duration: const Duration(milliseconds: 260),
+                curve: Curves.easeOutCubic,
+                left: 0,
+                right: 0,
+                top: 0,
+                height: maskHeight,
+                child: const ColoredBox(color: Colors.black),
+              ),
+              AnimatedPositioned(
+                duration: const Duration(milliseconds: 260),
+                curve: Curves.easeOutCubic,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                height: maskHeight,
+                child: const ColoredBox(color: Colors.black),
+              ),
+              if (_gridVisible) Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: _GridPainter()))),
+              Positioned.fill(child: _buildCenterLevel()),
+              Positioned(top: 10, left: 0, right: 0, child: Center(child: _buildArrow())),
+              Positioned(
+                left: 16,
+                right: 16,
+                bottom: 18,
+                child: _buildPanel(),
+              ),
+              if (_focusRingVisible && _focusPoint != null)
+                _buildFocusOverlay(constraints),
+              if (_countdownRemaining != null) _buildCountdownOverlay(),
+              if (_showCaptureSpinner) _buildCaptureSpinner(),
+              if (_errorMessage != null)
+                Positioned(
+                  left: 14,
+                  right: 14,
+                  top: 56,
+                  child: _InlineNotice(message: _errorMessage!),
+                ),
+              if (_loadingMessage != null)
+                Positioned(
+                  left: 14,
+                  right: 14,
+                  bottom: maskHeight + 24,
+                  child: _InlineNotice(message: _loadingMessage!),
+                ),
+            ],
+          ),
         );
       },
-      child: cameraReady || _isMockMode
-          ? _buildCameraSurface(key: ValueKey<String>('surface-${_aspectChoice.name}-$_currentCameraIndex'))
-          : _buildLoadingSurface(key: const ValueKey<String>('loading-surface')),
     );
   }
 
-  Widget _buildLoadingSurface({required Key key}) {
-    return Container(
-      key: key,
-      decoration: BoxDecoration(
-        color: const Color(0xFF111113),
-        borderRadius: BorderRadius.circular(34),
-        border: Border.all(color: Colors.white.withOpacity(0.08)),
+  Widget _buildPreviewContent(double previewAspect) {
+    final controller = _cameraController;
+    if (_isMockMode || controller == null || !controller.value.isInitialized) {
+      return _buildMockSurface();
+    }
+
+    return Center(
+      child: FittedBox(
+        fit: BoxFit.cover,
+        child: SizedBox(
+          width: 1000,
+          height: 1000 / previewAspect,
+          child: CameraPreview(controller),
+        ),
       ),
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const CircularProgressIndicator(color: Colors.white),
-            const SizedBox(height: 14),
-            Text(
-              _errorMessage ?? '正在加载相机...',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.85),
-                fontSize: 14,
-                height: 1.35,
-              ),
-            ),
-            if (_errorMessage != null) ...[
-              const SizedBox(height: 16),
-              TextButton(
-                onPressed: _initializeCamera,
-                child: const Text('重试'),
-              ),
-            ],
+    );
+  }
+
+  Widget _buildMockSurface() {
+    return const DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: <Color>[
+            Color(0xFF08111F),
+            Color(0xFF172554),
+            Color(0xFF0B1020),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildCameraSurface({required Key key}) {
-    return LayoutBuilder(
-      key: key,
-      builder: (context, constraints) {
-        final aspect = _captureAspectRatio;
-        final focusPoint = _focusPoint;
-
-        return Container(
-          decoration: BoxDecoration(
-            color: const Color(0xFF111113),
-            borderRadius: BorderRadius.circular(34),
-            border: Border.all(color: Colors.white.withOpacity(0.08)),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x4D000000),
-                blurRadius: 26,
-                offset: Offset(0, 14),
+  Widget _buildArrow() {
+    return GestureDetector(
+      onTap: _onArrowTapped,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(999),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: Colors.white.withOpacity(0.16)),
+            ),
+            child: AnimatedRotation(
+              turns: _panelExpanded ? 0.5 : 0.0,
+              duration: const Duration(milliseconds: 220),
+              child: const Icon(
+                CupertinoIcons.chevron_down,
+                color: Colors.white,
+                size: 18,
               ),
-            ],
+            ),
           ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(34),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                Center(
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 260),
-                    child: AspectRatio(
-                      key: ValueKey<double>(aspect),
-                      aspectRatio: aspect,
-                      child: LayoutBuilder(
-                        builder: (context, innerConstraints) {
-                          final previewSize = Size(
-                            innerConstraints.maxWidth,
-                            innerConstraints.maxHeight,
-                          );
-                          return Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              if (_isMockMode)
-                                _buildMockPreview()
-                              else
-                                GestureDetector(
-                                  behavior: HitTestBehavior.opaque,
-                                  onTapDown: (details) =>
-                                      _handleTapToFocus(details, innerConstraints),
-                                  onScaleStart: _handleScaleStart,
-                                  onScaleUpdate: _handleScaleUpdate,
-                                  child: CameraPreview(_cameraController!),
-                                ),
-                              IgnorePointer(
-                                child: DecoratedBox(
-                                  decoration: BoxDecoration(
-                                    gradient: LinearGradient(
-                                      begin: Alignment.topCenter,
-                                      end: Alignment.bottomCenter,
-                                      colors: <Color>[
-                                        Colors.black.withOpacity(0.30),
-                                        Colors.transparent,
-                                        Colors.transparent,
-                                        Colors.black.withOpacity(0.34),
-                                      ],
-                                      stops: const [0.0, 0.16, 0.72, 1.0],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              if (_shutterFlashVisible)
-                                IgnorePointer(
-                                  child: AnimatedOpacity(
-                                    opacity: 0.90,
-                                    duration: const Duration(milliseconds: 90),
-                                    child: Container(color: Colors.white),
-                                  ),
-                                ),
-                              if (focusPoint != null)
-                                _buildFocusOverlay(previewSize, focusPoint),
-                              if (_countdownRemaining != null) _buildCountdownOverlay(),
-                            ],
-                          );
-                        },
-                      ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPanel() {
+    final labelsVisible = _panelExpanded;
+    return AnimatedSlide(
+      offset: _panelExpanded ? Offset.zero : const Offset(0, 0.42),
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
+      child: AnimatedOpacity(
+        opacity: _panelExpanded ? 1.0 : 0.0,
+        duration: const Duration(milliseconds: 180),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(34),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.14),
+                borderRadius: BorderRadius.circular(34),
+                border: Border.all(color: Colors.white.withOpacity(0.16)),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x30000000),
+                    blurRadius: 30,
+                    offset: Offset(0, 12),
+                  ),
+                ],
+              ),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                physics: const BouncingScrollPhysics(),
+                child: Row(
+                  children: [
+                    _ChubbyControl(
+                      icon: CupertinoIcons.bolt_fill,
+                      title: '闪光灯',
+                      active: _flashChoice != _FlashChoice.off,
+                      expanded: labelsVisible,
+                      onTap: _openFlashMenu,
                     ),
+                    _ChubbyControl(
+                      icon: CupertinoIcons.circle_grid_3x3_fill,
+                      title: '实况',
+                      active: false,
+                      disabled: true,
+                      expanded: labelsVisible,
+                      onTap: null,
+                    ),
+                    _ChubbyControl(
+                      icon: CupertinoIcons.timer,
+                      title: '计时器',
+                      active: _timerChoice != _TimerChoice.off,
+                      expanded: labelsVisible,
+                      onTap: _openTimerMenu,
+                    ),
+                    _ChubbyControl(
+                      icon: CupertinoIcons.sun_max_fill,
+                      title: '曝光',
+                      active: _exposureOffset.abs() > 0.05,
+                      expanded: labelsVisible,
+                      subtitle: 'EV ${_exposureOffset.toStringAsFixed(1)}',
+                      onTap: _onPanelExposureTapped,
+                    ),
+                    _ChubbyControl(
+                      icon: CupertinoIcons.crop,
+                      title: '宽高比',
+                      active: true,
+                      expanded: labelsVisible,
+                      subtitle: _aspectChoice.label,
+                      onTap: _openAspectMenu,
+                    ),
+                    _ChubbyControl(
+                      icon: CupertinoIcons.moon_stars_fill,
+                      title: '夜间',
+                      active: _nightMode,
+                      expanded: labelsVisible,
+                      onTap: _onNightTap,
+                    ),
+                    _ChubbyControl(
+                      icon: CupertinoIcons.grid,
+                      title: '网格线',
+                      active: _gridVisible,
+                      expanded: labelsVisible,
+                      onTap: () {
+                        _toggleGrid();
+                        HapticFeedback.selectionClick();
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCenterLevel() {
+    return AnimatedBuilder(
+      animation: _levelController,
+      builder: (context, _) {
+        final t = _levelController.value * math.pi * 2;
+        const amp = 6.0;
+        final offset = Offset(math.sin(t) * amp, math.cos(t * 1.2) * amp);
+        final aligned = offset.distance < 0.9;
+        if (aligned) {
+          final now = DateTime.now();
+          if (_lastLevelHaptic == null ||
+              now.difference(_lastLevelHaptic!) > const Duration(seconds: 1)) {
+            _lastLevelHaptic = now;
+            unawaited(HapticFeedback.lightImpact());
+          }
+        }
+
+        return IgnorePointer(
+          child: Center(
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                _CrossHair(
+                  color: Colors.white.withOpacity(0.36),
+                  size: 24,
+                  strokeWidth: 1.1,
+                ),
+                Transform.translate(
+                  offset: offset,
+                  child: _CrossHair(
+                    color: aligned ? const Color(0xFFFFD84D) : Colors.white.withOpacity(0.92),
+                    size: 18,
+                    strokeWidth: 1.5,
                   ),
                 ),
-                if (_errorMessage != null)
-                  Positioned(
-                    left: 14,
-                    right: 14,
-                    top: 14,
-                    child: _InlineNotice(message: _errorMessage!),
-                  ),
-                if (_loadingMessage != null)
-                  Positioned(
-                    left: 14,
-                    right: 14,
-                    bottom: 14,
-                    child: _InlineNotice(message: _loadingMessage!),
-                  ),
               ],
             ),
           ),
@@ -1096,153 +1329,73 @@ class _CameraTabState extends State<CameraTab> {
     );
   }
 
-  Widget _buildMockPreview() {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: null,
-      child: DecoratedBox(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: <Color>[Color(0xFF1D2B53), Color(0xFF0F172A), Color(0xFF111827)],
-          ),
-        ),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            Align(
-              alignment: Alignment.topRight,
-              child: Padding(
-                padding: const EdgeInsets.all(18),
-                child: Text(
-                  'Mock Mode',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.72),
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.6,
-                  ),
-                ),
-              ),
-            ),
-            Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    CupertinoIcons.camera_fill,
-                    color: Colors.white.withOpacity(0.92),
-                    size: 68,
-                  ),
-                  const SizedBox(height: 14),
-                  Text(
-                    'No camera detected',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.9),
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Preview and controls stay available for simulator fallback.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.68),
-                      fontSize: 13,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  Widget _buildFocusOverlay(BoxConstraints constraints) {
+    final point = _focusPoint!;
+    const ringSize = 84.0;
+    const sliderWidth = 28.0;
+    const sliderHeight = 138.0;
 
-  Widget _buildFocusOverlay(Size previewSize, Offset focusPoint) {
-    const boxSize = 66.0;
-    const exposureWidth = 38.0;
-    const exposureHeight = 150.0;
+    final left = (point.dx - ringSize / 2).clamp(10.0, constraints.maxWidth - ringSize - sliderWidth - 18);
+    final top = (point.dy - ringSize / 2 - 8).clamp(10.0, constraints.maxHeight - sliderHeight - 20.0);
 
-    final x = (focusPoint.dx - boxSize / 2).clamp(10.0, previewSize.width - boxSize - 10.0);
-    final y = (focusPoint.dy - boxSize / 2 - 28).clamp(10.0, previewSize.height - exposureHeight - 18.0);
+    final sliderValue = (_exposureOffset - _minExposureOffset) /
+        math.max(0.01, _maxExposureOffset - _minExposureOffset);
 
     return Positioned(
-      left: x,
-      top: y,
+      left: left,
+      top: top,
       child: AnimatedOpacity(
         opacity: _focusOpacity,
         duration: const Duration(milliseconds: 220),
-        child: GestureDetector(
-          onVerticalDragStart: (_) {
-            _dragStartExposure = _exposureOffset;
-          },
-          onVerticalDragUpdate: _handleFocusExposureDrag,
+        child: AnimatedScale(
+          scale: _focusOpacity > 0.0 ? 1.0 : 0.94,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutBack,
           child: Row(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Container(
-                width: boxSize,
-                height: boxSize,
+                width: ringSize,
+                height: ringSize,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: const Color(0xFFFFD84D), width: 2.2),
-                  color: const Color(0x22FFD84D),
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0x66FFD84D).withOpacity(0.35),
-                      blurRadius: 18,
-                      spreadRadius: 1,
-                    ),
-                  ],
+                  border: Border.all(color: const Color(0xFFFFD84D), width: 2.1),
+                  color: const Color(0x18FFD84D),
                 ),
-                child: Center(
-                  child: Container(
-                    width: 16,
-                    height: 16,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: const Color(0xFFFFD84D), width: 2),
-                    ),
+                child: const Center(
+                  child: _CrossHair(
+                    color: Color(0xFFFFD84D),
+                    size: 20,
+                    strokeWidth: 1.4,
                   ),
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               Container(
-                width: exposureWidth,
-                height: exposureHeight,
-                padding: const EdgeInsets.symmetric(vertical: 10),
+                width: sliderWidth,
+                height: sliderHeight,
+                padding: const EdgeInsets.symmetric(vertical: 8),
                 decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.26),
                   borderRadius: BorderRadius.circular(999),
-                  color: Colors.black.withOpacity(0.22),
-                  border: Border.all(color: Colors.white.withOpacity(0.14)),
+                  border: Border.all(color: Colors.white.withOpacity(0.12)),
                 ),
                 child: Column(
                   children: [
                     const Icon(CupertinoIcons.sun_max_fill, color: Colors.white, size: 14),
                     const SizedBox(height: 8),
                     Expanded(
-                      child: RotatedBox(
-                        quarterTurns: 3,
-                        child: LinearProgressIndicator(
-                          value: (_exposureOffset - _minExposureOffset) /
-                              math.max(0.01, _maxExposureOffset - _minExposureOffset),
-                          backgroundColor: Colors.white.withOpacity(0.12),
-                          valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFFFFD84D)),
-                          minHeight: 4,
+                      child: Align(
+                        alignment: Alignment(0, 1 - (sliderValue * 2)),
+                        child: Container(
+                          width: 10,
+                          height: 10,
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Color(0xFFFFD84D),
+                          ),
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'EV ${_exposureOffset.toStringAsFixed(1)}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 9,
-                        fontWeight: FontWeight.w700,
                       ),
                     ),
                   ],
@@ -1260,29 +1413,34 @@ class _CameraTabState extends State<CameraTab> {
       child: IgnorePointer(
         child: Center(
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(38),
+            borderRadius: BorderRadius.circular(40),
             child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+              filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
               child: Container(
-                width: 170,
-                height: 170,
+                width: 176,
+                height: 176,
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.14),
-                  borderRadius: BorderRadius.circular(38),
-                  border: Border.all(color: Colors.white.withOpacity(0.22)),
+                  color: Colors.white.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(40),
+                  border: Border.all(color: Colors.white.withOpacity(0.18)),
                 ),
                 child: Center(
-                  child: AnimatedScale(
-                    scale: 1.0,
+                  child: AnimatedSwitcher(
                     duration: const Duration(milliseconds: 160),
-                    curve: Curves.easeOutBack,
+                    transitionBuilder: (child, animation) {
+                      return FadeTransition(
+                        opacity: animation,
+                        child: ScaleTransition(scale: animation, child: child),
+                      );
+                    },
                     child: Text(
                       '${_countdownRemaining!}',
+                      key: ValueKey<int>(_countdownRemaining!),
                       style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 86,
+                        fontSize: 88,
                         fontWeight: FontWeight.w900,
-                        letterSpacing: -5,
+                        letterSpacing: -4,
                       ),
                     ),
                   ),
@@ -1295,108 +1453,105 @@ class _CameraTabState extends State<CameraTab> {
     );
   }
 
-  Widget _buildZoomRow() {
-    final presets = <double>[0.5, 1.0, 2.0];
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          for (final preset in presets) ...[
-            _ZoomPresetButton(
-              label: preset == 1.0 ? '1x' : '${preset.toStringAsFixed(1)}x',
-              selected: (_zoomLevel - preset).abs() < 0.18,
-              onTap: _isBusy || _isCountingDown || !_cameraReady
-                  ? null
-                  : () => _setZoomPreset(preset),
+  Widget _buildCaptureSpinner() {
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: Center(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(40),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+              child: Container(
+                width: 92,
+                height: 92,
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.20),
+                  borderRadius: BorderRadius.circular(40),
+                  border: Border.all(color: Colors.white.withOpacity(0.15)),
+                ),
+                child: const Center(
+                  child: SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.4,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
             ),
-            if (preset != presets.last) const SizedBox(width: 12),
-          ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBottomBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+      child: Row(
+        children: [
+          _RoundActionButton(
+            icon: CupertinoIcons.camera_rotate_fill,
+            label: widget.cameras.length > 1 ? '切换' : '单摄',
+            onTap: widget.cameras.length > 1 && !_isBusy && !_isCountingDown
+                ? _switchCamera
+                : null,
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Center(
+              child: GestureDetector(
+                onTap: _isBusy || _isCountingDown ? null : _handleCapturePressed,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  width: 94,
+                  height: 94,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withOpacity(_isBusy ? 0.18 : 0.08),
+                    border: Border.all(
+                      color: Colors.white.withOpacity(_isBusy ? 0.55 : 0.88),
+                      width: 4,
+                    ),
+                  ),
+                  child: Center(
+                    child: Container(
+                      width: 68,
+                      height: 68,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white.withOpacity(_isBusy ? 0.55 : 1),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 16),
+          _RoundActionButton(
+            icon: CupertinoIcons.crop,
+            label: _aspectChoice.label,
+            onTap: !_isBusy && !_isCountingDown ? _openAspectMenu : null,
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildBottomControls() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Expanded(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'Zoom ${_zoomLevel.toStringAsFixed(1)}x',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.72),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    _MicroActionButton(
-                      icon: CupertinoIcons.bolt_circle_fill,
-                      label: '闪光',
-                      onTap: _isBusy || _isCountingDown ? null : _openFlashMenu,
-                    ),
-                    _MicroActionButton(
-                      icon: CupertinoIcons.timer,
-                      label: '延时',
-                      onTap: _isBusy || _isCountingDown ? null : _openTimerMenu,
-                    ),
-                    _MicroActionButton(
-                      icon: CupertinoIcons.crop,
-                      label: _aspectChoice.label,
-                      onTap: _isBusy || _isCountingDown ? null : _openAspectMenu,
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 14),
-          _ShutterButton(
-            enabled: !_isBusy && !_isCountingDown && _cameraReady,
-            onTap: _handleCapturePressed,
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  widget.cameras.length > 1
-                      ? '前后置可切换'
-                      : '单摄设备',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.72),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    _MicroActionButton(
-                      icon: CupertinoIcons.camera_rotate_fill,
-                      label: '切换',
-                      onTap: _isBusy || _isCountingDown || widget.cameras.length < 2
-                          ? null
-                          : _switchCamera,
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Column(
+          children: [
+            Expanded(child: _buildStage()),
+            _buildBottomBar(),
+          ],
+        ),
       ),
     );
   }
@@ -1432,23 +1587,15 @@ class _GlassSelectionCard<T> extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ClipRRect(
-      borderRadius: BorderRadius.circular(24),
+      borderRadius: BorderRadius.circular(28),
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+        filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
         child: Container(
-          width: 220,
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
             color: Colors.white.withOpacity(0.14),
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: Colors.white.withOpacity(0.18)),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x32000000),
-                blurRadius: 28,
-                offset: Offset(0, 14),
-              ),
-            ],
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(color: Colors.white.withOpacity(0.16)),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1458,9 +1605,8 @@ class _GlassSelectionCard<T> extends StatelessWidget {
                 title,
                 style: const TextStyle(
                   color: Colors.white,
-                  fontSize: 12,
+                  fontSize: 13,
                   fontWeight: FontWeight.w800,
-                  letterSpacing: 0.3,
                 ),
               ),
               const SizedBox(height: 10),
@@ -1498,13 +1644,12 @@ class _GlassSelectionTile<T> extends StatelessWidget {
       borderRadius: BorderRadius.circular(18),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOut,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         decoration: BoxDecoration(
-          color: selected ? Colors.white.withOpacity(0.20) : Colors.white.withOpacity(0.06),
+          color: selected ? Colors.white.withOpacity(0.18) : Colors.white.withOpacity(0.06),
           borderRadius: BorderRadius.circular(18),
           border: Border.all(
-            color: selected ? Colors.white.withOpacity(0.30) : Colors.white.withOpacity(0.08),
+            color: selected ? Colors.white.withOpacity(0.28) : Colors.white.withOpacity(0.08),
           ),
         ),
         child: Row(
@@ -1548,22 +1693,117 @@ class _GlassSelectionTile<T> extends StatelessWidget {
   }
 }
 
-class _GlassIconButton extends StatelessWidget {
-  const _GlassIconButton({
+class _ChubbyControl extends StatelessWidget {
+  const _ChubbyControl({
+    required this.icon,
+    required this.title,
+    required this.expanded,
+    required this.onTap,
+    this.subtitle,
+    this.active = false,
+    this.disabled = false,
+  });
+
+  final IconData icon;
+  final String title;
+  final String? subtitle;
+  final bool expanded;
+  final bool active;
+  final bool disabled;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = !disabled && onTap != null;
+    return Padding(
+      padding: const EdgeInsets.only(right: 10),
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(999),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOut,
+          width: expanded ? 82 : 58,
+          padding: EdgeInsets.symmetric(horizontal: expanded ? 10 : 6, vertical: 10),
+          decoration: BoxDecoration(
+            color: disabled
+                ? Colors.white.withOpacity(0.06)
+                : active
+                    ? Colors.white.withOpacity(0.16)
+                    : Colors.white.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: disabled
+                  ? Colors.white.withOpacity(0.05)
+                  : Colors.white.withOpacity(active ? 0.20 : 0.10),
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 21,
+                color: disabled
+                    ? Colors.white.withOpacity(0.35)
+                    : active
+                        ? const Color(0xFFFFD84D)
+                        : Colors.white,
+              ),
+              AnimatedSize(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOut,
+                child: expanded
+                    ? Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              title,
+                              style: TextStyle(
+                                color: disabled
+                                    ? Colors.white.withOpacity(0.45)
+                                    : Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            if (subtitle != null)
+                              Text(
+                                subtitle!,
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.60),
+                                  fontSize: 9,
+                                ),
+                              ),
+                          ],
+                        ),
+                      )
+                    : const SizedBox.shrink(),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RoundActionButton extends StatelessWidget {
+  const _RoundActionButton({
     required this.icon,
     required this.label,
     required this.onTap,
-    this.enabled = true,
   });
 
   final IconData icon;
   final String label;
   final VoidCallback? onTap;
-  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
-    final active = enabled && onTap != null;
+    final active = onTap != null;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(18),
@@ -1571,26 +1811,23 @@ class _GlassIconButton extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(active ? 0.12 : 0.06),
+              color: Colors.white.withOpacity(active ? 0.10 : 0.05),
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(
-                color: Colors.white.withOpacity(active ? 0.18 : 0.10),
-              ),
+              border: Border.all(color: Colors.white.withOpacity(0.12)),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(icon, color: Colors.white, size: 16),
+                Icon(icon, size: 18, color: Colors.white),
                 const SizedBox(width: 6),
                 Text(
                   label,
                   style: TextStyle(
-                    color: Colors.white.withOpacity(active ? 0.95 : 0.55),
-                    fontSize: 12,
+                    color: Colors.white.withOpacity(active ? 0.92 : 0.50),
+                    fontSize: 11,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
@@ -1603,155 +1840,82 @@ class _GlassIconButton extends StatelessWidget {
   }
 }
 
-class _MicroActionButton extends StatelessWidget {
-  const _MicroActionButton({
-    required this.icon,
-    required this.label,
-    required this.onTap,
+class _CrossHair extends StatelessWidget {
+  const _CrossHair({
+    required this.color,
+    required this.size,
+    required this.strokeWidth,
   });
 
-  final IconData icon;
-  final String label;
-  final VoidCallback? onTap;
+  final Color color;
+  final double size;
+  final double strokeWidth;
 
   @override
   Widget build(BuildContext context) {
-    final enabled = onTap != null;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(999),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(enabled ? 0.10 : 0.05),
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: Colors.white.withOpacity(enabled ? 0.14 : 0.08)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: Colors.white, size: 16),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(
-                color: Colors.white.withOpacity(enabled ? 0.90 : 0.50),
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
-        ),
+    return SizedBox(
+      width: size,
+      height: size,
+      child: CustomPaint(
+        painter: _CrossHairPainter(color: color, strokeWidth: strokeWidth),
       ),
     );
   }
 }
 
-class _ZoomPresetButton extends StatelessWidget {
-  const _ZoomPresetButton({
-    required this.label,
-    required this.selected,
-    required this.onTap,
+class _CrossHairPainter extends CustomPainter {
+  _CrossHairPainter({
+    required this.color,
+    required this.strokeWidth,
   });
 
-  final String label;
-  final bool selected;
-  final VoidCallback? onTap;
+  final Color color;
+  final double strokeWidth;
 
   @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(999),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOut,
-        width: 64,
-        height: 64,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: selected ? Colors.white : Colors.white.withOpacity(0.08),
-          boxShadow: selected
-              ? [
-                  BoxShadow(
-                    color: Colors.white.withOpacity(0.15),
-                    blurRadius: 18,
-                    spreadRadius: 1,
-                  ),
-                ]
-              : const [],
-          border: Border.all(
-            color: selected ? Colors.white : Colors.white.withOpacity(0.12),
-            width: 1.2,
-          ),
-        ),
-        child: Center(
-          child: Text(
-            label,
-            style: TextStyle(
-              color: selected ? const Color(0xFF050507) : Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.w900,
-              letterSpacing: -0.2,
-            ),
-          ),
-        ),
-      ),
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round;
+
+    canvas.drawLine(
+      Offset(size.width / 2, 0),
+      Offset(size.width / 2, size.height),
+      paint,
     );
+    canvas.drawLine(
+      Offset(0, size.height / 2),
+      Offset(size.width, size.height / 2),
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _CrossHairPainter oldDelegate) {
+    return oldDelegate.color != color || oldDelegate.strokeWidth != strokeWidth;
   }
 }
 
-class _ShutterButton extends StatelessWidget {
-  const _ShutterButton({
-    required this.enabled,
-    required this.onTap,
-  });
+class _GridPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.white.withOpacity(0.16)
+      ..strokeWidth = 0.7;
 
-  final bool enabled;
-  final Future<void> Function()? onTap;
+    const divisions = 3;
+    for (var i = 1; i < divisions; i++) {
+      final dx = size.width * i / divisions;
+      final dy = size.height * i / divisions;
+      canvas.drawLine(Offset(dx, 0), Offset(dx, size.height), paint);
+      canvas.drawLine(Offset(0, dy), Offset(size.width, dy), paint);
+    }
+  }
 
   @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: enabled && onTap != null ? () => onTap!() : null,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOut,
-        width: 92,
-        height: 92,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: Colors.white.withOpacity(enabled ? 0.08 : 0.03),
-          border: Border.all(color: Colors.white.withOpacity(enabled ? 0.9 : 0.28), width: 4),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.35),
-              blurRadius: 24,
-              offset: const Offset(0, 10),
-            ),
-          ],
-        ),
-        child: Center(
-          child: Container(
-            width: 68,
-            height: 68,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: enabled ? Colors.white : Colors.white.withOpacity(0.34),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x26FFFFFF),
-                  blurRadius: 12,
-                  spreadRadius: 0.5,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class _InlineNotice extends StatelessWidget {
@@ -1770,7 +1934,7 @@ class _InlineNotice extends StatelessWidget {
           decoration: BoxDecoration(
             color: Colors.black.withOpacity(0.28),
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: Colors.white.withOpacity(0.12)),
+            border: Border.all(color: Colors.white.withOpacity(0.10)),
           ),
           child: Text(
             message,
