@@ -42,17 +42,6 @@ enum _TimerChoice { off, three, five, ten }
 enum _AspectChoice { fourThree, oneOne, sixteenNine }
 
 extension _AspectChoiceX on _AspectChoice {
-  double get value {
-    switch (this) {
-      case _AspectChoice.fourThree:
-        return 4 / 3;
-      case _AspectChoice.oneOne:
-        return 1;
-      case _AspectChoice.sixteenNine:
-        return 16 / 9;
-    }
-  }
-
   String get label {
     switch (this) {
       case _AspectChoice.fourThree:
@@ -80,7 +69,7 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
   bool _isBusy = false;
   bool _isCountingDown = false;
   bool _panelExpanded = false;
-  bool _gridVisible = false;
+  bool _stylePanelExpanded = false;
   bool _nightMode = false;
   bool _focusRingVisible = false;
   bool _showCaptureSpinner = false;
@@ -102,6 +91,8 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
   double _maxExposureOffset = 2.0;
   double _exposureBase = 0.0;
   double? _nightModeSavedExposure;
+  double _temperatureValue = 0.0;
+  double _tintValue = 0.0;
 
   Offset? _focusPoint;
   double _focusOpacity = 0.0;
@@ -158,7 +149,16 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
     return widget.cameras.first;
   }
 
-  double get _aspectValue => _aspectChoice.value;
+  double get _zoomUiMin => math.max(1.0, _minZoomLevel);
+  double get _zoomUiMax => math.min(2.0, _maxZoomLevel);
+
+  double get _captureAspect {
+    return switch (_aspectChoice) {
+      _AspectChoice.fourThree => 3 / 4,
+      _AspectChoice.oneOne => 1,
+      _AspectChoice.sixteenNine => 9 / 16,
+    };
+  }
 
   String _verificationUrlForHash(String hash) {
     return Uri.parse('$_backendBaseUrl/api/verify')
@@ -257,7 +257,7 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
       _maxExposureOffset = 2.0;
     }
 
-    _zoomLevel = _zoomLevel.clamp(_minZoomLevel, _maxZoomLevel);
+    _zoomLevel = _zoomLevel.clamp(_zoomUiMin, _zoomUiMax);
     _exposureOffset = _exposureOffset.clamp(_minExposureOffset, _maxExposureOffset);
 
     try {
@@ -298,7 +298,7 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
     final controller = _cameraController;
     if (controller == null || !controller.value.isInitialized) return;
 
-    final clamped = target.clamp(_minZoomLevel, _maxZoomLevel);
+    final clamped = target.clamp(_zoomUiMin, _zoomUiMax);
     if ((clamped - _zoomLevel).abs() < 0.01) return;
 
     try {
@@ -374,7 +374,9 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
       setState(() {
         _focusRingVisible = false;
         _focusOpacity = 0.0;
+        _focusPoint = null;
       });
+      unawaited(_safeSetFocusAndExposurePoint(const Offset(0.5, 0.5)));
     });
   }
 
@@ -418,17 +420,14 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
 
   void _onVerticalSwipeEnd(DragEndDetails details) {
     if (_focusRingVisible && _focusPoint != null) return;
-    final velocity = details.primaryVelocity ?? 0.0;
-    if (velocity < -150) {
-      _setPanelExpanded(true);
-    } else if (velocity > 150) {
-      _setPanelExpanded(false);
-    }
   }
 
   void _setPanelExpanded(bool expanded) {
     if (_panelExpanded == expanded) return;
     setState(() => _panelExpanded = expanded);
+    if (expanded) {
+      _stylePanelExpanded = false;
+    }
     if (expanded) {
       _panelController.forward();
     } else {
@@ -437,6 +436,25 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
   }
 
   void _togglePanel() => _setPanelExpanded(!_panelExpanded);
+
+  void _toggleStylePanel() {
+    setState(() {
+      _stylePanelExpanded = !_stylePanelExpanded;
+      if (_stylePanelExpanded) {
+        _panelExpanded = false;
+      }
+    });
+    if (_stylePanelExpanded) {
+      _panelController.reverse();
+    }
+  }
+
+  void _resetStylePanel() {
+    setState(() {
+      _temperatureValue = 0.0;
+      _tintValue = 0.0;
+    });
+  }
 
   Future<void> _openFlashMenu() async {
     final choice = await _showSelectionMenu<_FlashChoice>(
@@ -658,10 +676,6 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
     }
   }
 
-  void _toggleGrid() {
-    setState(() => _gridVisible = !_gridVisible);
-  }
-
   Future<void> _handleCapturePressed() async {
     if (_isBusy || _isCountingDown) return;
 
@@ -853,7 +867,7 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
     final decoded = img.decodeImage(bytes);
     if (decoded == null) return sourceFile;
 
-    final targetAspect = _aspectValue;
+    final targetAspect = _captureAspect;
     final currentAspect = decoded.width / decoded.height;
     if ((currentAspect - targetAspect).abs() < 0.01) {
       return sourceFile;
@@ -869,7 +883,9 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
       cropX = ((decoded.width - cropWidth) / 2).round();
     } else {
       cropHeight = (decoded.width / targetAspect).round();
-      cropY = ((decoded.height - cropHeight) / 2).round();
+      cropY = _aspectChoice == _AspectChoice.oneOne
+          ? 0
+          : ((decoded.height - cropHeight) / 2).round();
     }
 
     cropWidth = cropWidth.clamp(1, decoded.width);
@@ -1041,89 +1057,153 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
   Widget _buildStage() {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final visibleHeight = math.min(
-          constraints.maxHeight,
-          constraints.maxWidth / _aspectValue,
-        );
-        final maskHeight = ((constraints.maxHeight - visibleHeight) / 2).clamp(
-          0.0,
-          constraints.maxHeight / 2,
-        );
+        final stageWidth = constraints.maxWidth;
+        final stageHeight = constraints.maxHeight;
+        final basePreviewHeight = math.min(stageHeight, stageWidth * (4 / 3));
+        final fullPreview = _aspectChoice == _AspectChoice.sixteenNine;
+        final previewHeight = fullPreview ? stageHeight : basePreviewHeight;
+        final double captureHeight = switch (_aspectChoice) {
+          _AspectChoice.oneOne => math.min(stageWidth, previewHeight),
+          _AspectChoice.fourThree => previewHeight,
+          _AspectChoice.sixteenNine => stageHeight,
+        };
         final controller = _cameraController;
         final previewAspect = controller?.value.aspectRatio ?? (4 / 3);
+        const controlsHeight = 176.0;
 
-        return GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTapDown: (details) {
-            if (_isBusy || _isCountingDown) return;
-            _presentFocusRing(details.localPosition);
-            _exposureBase = _exposureOffset;
-            final normalized = Offset(
-              (details.localPosition.dx / constraints.maxWidth).clamp(0.0, 1.0),
-              (details.localPosition.dy / constraints.maxHeight).clamp(0.0, 1.0),
-            );
-            unawaited(_safeSetFocusAndExposurePoint(normalized));
-          },
-          onScaleStart: (_) => _onScaleStart(),
-          onScaleUpdate: _onScaleUpdate,
-          onVerticalDragStart: (_) => _onFocusDragStart(),
-          onVerticalDragUpdate: _applyFocusDrag,
-          onVerticalDragEnd: _onVerticalSwipeEnd,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              Positioned.fill(child: _buildPreviewContent(previewAspect)),
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 260),
-                curve: Curves.easeOutCubic,
-                left: 0,
-                right: 0,
-                top: 0,
-                height: maskHeight,
-                child: Container(
-                  color: Colors.black.withOpacity(0.35),
+        final previewRegion = SizedBox(
+          width: stageWidth,
+          height: previewHeight,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapDown: (details) {
+              if (_isBusy || _isCountingDown) return;
+              if (details.localPosition.dy < 0 ||
+                  details.localPosition.dy > captureHeight ||
+                  details.localPosition.dx < 0 ||
+                  details.localPosition.dx > stageWidth) {
+                return;
+              }
+              _presentFocusRing(details.localPosition);
+              _exposureBase = _exposureOffset;
+              final normalized = Offset(
+                (details.localPosition.dx / stageWidth).clamp(0.0, 1.0),
+                (details.localPosition.dy / captureHeight).clamp(0.0, 1.0),
+              );
+              unawaited(_safeSetFocusAndExposurePoint(normalized));
+            },
+            onScaleStart: (_) => _onScaleStart(),
+            onScaleUpdate: _onScaleUpdate,
+            onVerticalDragStart: (_) => _onFocusDragStart(),
+            onVerticalDragUpdate: _applyFocusDrag,
+            onVerticalDragEnd: _onVerticalSwipeEnd,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Positioned.fill(child: _buildPreviewContent(previewAspect)),
+                if (_aspectChoice == _AspectChoice.oneOne &&
+                    previewHeight > captureHeight)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: captureHeight,
+                    bottom: 0,
+                    child: const ColoredBox(color: Colors.black),
+                  ),
+              ],
+            ),
+          ),
+        );
+
+        final topControls = Positioned(
+          top: 10,
+          left: 12,
+          right: 12,
+          child: SizedBox(
+            height: 36,
+            child: Stack(
+              children: [
+                Align(
+                  alignment: Alignment.topCenter,
+                  child: _buildArrow(),
                 ),
-              ),
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 260),
-                curve: Curves.easeOutCubic,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                height: maskHeight,
-                child: Container(
-                  color: Colors.black.withOpacity(0.35),
+                Align(
+                  alignment: Alignment.topRight,
+                  child: _TopIconButton(
+                    icon: CupertinoIcons.layers_alt,
+                    onTap: _toggleStylePanel,
+                  ),
                 ),
-              ),
-              if (_gridVisible) Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: _GridPainter()))),
-              Positioned.fill(child: _buildCenterLevel()),
-              Positioned(top: 10, left: 0, right: 0, child: Center(child: _buildArrow())),
+              ],
+            ),
+          ),
+        );
+
+        final focusConstraints = BoxConstraints.tightFor(
+          width: stageWidth,
+          height: captureHeight,
+        );
+        final double loadingBottom =
+            fullPreview ? controlsHeight + 24 : 24;
+
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            const ColoredBox(color: Colors.black),
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: previewHeight,
+              child: previewRegion,
+            ),
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: captureHeight,
+              child: _buildCenterLevel(),
+            ),
+            topControls,
+            if (_panelExpanded)
               Positioned(
+                top: 58,
                 left: 16,
                 right: 16,
-                bottom: 18,
                 child: _buildPanel(),
               ),
-              if (_focusRingVisible && _focusPoint != null)
-                _buildFocusOverlay(constraints),
-              if (_countdownRemaining != null) _buildCountdownOverlay(),
-              if (_showCaptureSpinner) _buildCaptureSpinner(),
-              if (_errorMessage != null)
-                Positioned(
-                  left: 14,
-                  right: 14,
-                  top: 56,
-                  child: _InlineNotice(message: _errorMessage!),
-                ),
-              if (_loadingMessage != null)
-                Positioned(
-                  left: 14,
-                  right: 14,
-                  bottom: maskHeight + 24,
-                  child: _InlineNotice(message: _loadingMessage!),
-                ),
-            ],
-          ),
+            if (_stylePanelExpanded)
+              Positioned(
+                left: 14,
+                right: 14,
+                bottom: controlsHeight + 10,
+                child: _buildStylePanel(),
+              ),
+            if (_focusRingVisible && _focusPoint != null)
+              _buildFocusOverlay(focusConstraints),
+            if (_countdownRemaining != null) _buildCountdownOverlay(),
+            if (_showCaptureSpinner) _buildCaptureSpinner(),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: _buildControlArea(fullPreview: fullPreview),
+            ),
+            if (_errorMessage != null)
+              Positioned(
+                left: 14,
+                right: 14,
+                top: 56,
+                child: _InlineNotice(message: _errorMessage!),
+              ),
+            if (_loadingMessage != null)
+              Positioned(
+                left: 14,
+                right: 14,
+                bottom: loadingBottom,
+                child: _InlineNotice(message: _loadingMessage!),
+              ),
+          ],
         );
       },
     );
@@ -1194,95 +1274,76 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
   }
 
   Widget _buildPanel() {
-    final labelsVisible = _panelExpanded;
-    return AnimatedSlide(
-      offset: _panelExpanded ? Offset.zero : const Offset(0, 0.42),
-      duration: const Duration(milliseconds: 260),
-      curve: Curves.easeOutCubic,
-      child: AnimatedOpacity(
-        opacity: _panelExpanded ? 1.0 : 0.0,
-        duration: const Duration(milliseconds: 180),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(34),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.14),
-                borderRadius: BorderRadius.circular(34),
-                border: Border.all(color: Colors.white.withOpacity(0.16)),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x30000000),
-                    blurRadius: 30,
-                    offset: Offset(0, 12),
-                  ),
-                ],
+    const labelsVisible = true;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(34),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.14),
+            borderRadius: BorderRadius.circular(34),
+            border: Border.all(color: Colors.white.withOpacity(0.16)),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x30000000),
+                blurRadius: 30,
+                offset: Offset(0, 12),
               ),
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                physics: const BouncingScrollPhysics(),
-                child: Row(
-                  children: [
-                    _ChubbyControl(
-                      icon: CupertinoIcons.bolt_fill,
-                      title: '闪光灯',
-                      active: _flashChoice != _FlashChoice.off,
-                      expanded: labelsVisible,
-                      onTap: _openFlashMenu,
-                    ),
-                    _ChubbyControl(
-                      icon: CupertinoIcons.circle_grid_3x3_fill,
-                      title: '实况',
-                      active: false,
-                      disabled: true,
-                      expanded: labelsVisible,
-                      onTap: null,
-                    ),
-                    _ChubbyControl(
-                      icon: CupertinoIcons.timer,
-                      title: '计时器',
-                      active: _timerChoice != _TimerChoice.off,
-                      expanded: labelsVisible,
-                      onTap: _openTimerMenu,
-                    ),
-                    _ChubbyControl(
-                      icon: CupertinoIcons.sun_max_fill,
-                      title: '曝光',
-                      active: _exposureOffset.abs() > 0.05,
-                      expanded: labelsVisible,
-                      subtitle: 'EV ${_exposureOffset.toStringAsFixed(1)}',
-                      onTap: _onPanelExposureTapped,
-                    ),
-                    _ChubbyControl(
-                      icon: CupertinoIcons.crop,
-                      title: '宽高比',
-                      active: true,
-                      expanded: labelsVisible,
-                      subtitle: _aspectChoice.label,
-                      onTap: _openAspectMenu,
-                    ),
-                    _ChubbyControl(
-                      icon: CupertinoIcons.moon_stars_fill,
-                      title: '夜间',
-                      active: _nightMode,
-                      expanded: labelsVisible,
-                      onTap: _onNightTap,
-                    ),
-                    _ChubbyControl(
-                      icon: CupertinoIcons.grid,
-                      title: '网格线',
-                      active: _gridVisible,
-                      expanded: labelsVisible,
-                      onTap: () {
-                        _toggleGrid();
-                        HapticFeedback.selectionClick();
-                      },
-                    ),
-                  ],
+            ],
+          ),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
+            child: Row(
+              children: [
+                _ChubbyControl(
+                  icon: CupertinoIcons.bolt_fill,
+                  title: '闪光灯',
+                  active: _flashChoice != _FlashChoice.off,
+                  expanded: labelsVisible,
+                  onTap: _openFlashMenu,
                 ),
-              ),
+                const _ChubbyControl(
+                  icon: CupertinoIcons.circle_grid_3x3_fill,
+                  title: '实况',
+                  active: false,
+                  disabled: true,
+                  expanded: labelsVisible,
+                  onTap: null,
+                ),
+                _ChubbyControl(
+                  icon: CupertinoIcons.timer,
+                  title: '计时器',
+                  active: _timerChoice != _TimerChoice.off,
+                  expanded: labelsVisible,
+                  onTap: _openTimerMenu,
+                ),
+                _ChubbyControl(
+                  icon: CupertinoIcons.sun_max_fill,
+                  title: '曝光',
+                  active: _exposureOffset.abs() > 0.05,
+                  expanded: labelsVisible,
+                  subtitle: 'EV ${_exposureOffset.toStringAsFixed(1)}',
+                  onTap: _onPanelExposureTapped,
+                ),
+                _ChubbyControl(
+                  icon: CupertinoIcons.crop,
+                  title: '宽高比',
+                  active: true,
+                  expanded: labelsVisible,
+                  subtitle: _aspectChoice.label,
+                  onTap: _openAspectMenu,
+                ),
+                _ChubbyControl(
+                  icon: CupertinoIcons.moon_stars_fill,
+                  title: '夜间',
+                  active: _nightMode,
+                  expanded: labelsVisible,
+                  onTap: _onNightTap,
+                ),
+              ],
             ),
           ),
         ),
@@ -1502,80 +1563,71 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildZoomControls() {
-   return Container(
-     height: 50,
-     padding: const EdgeInsets.symmetric(horizontal: 16),
-     child: Row(
-       mainAxisAlignment: MainAxisAlignment.center,
-       children: [
-         Text(
-           '.5',
-           style: TextStyle(
-             color: Colors.white.withOpacity(0.6),
-             fontSize: 15,
-             fontWeight: FontWeight.w500,
-           ),
-         ),
-         const SizedBox(width: 12),
-         Expanded(
-           child: SliderTheme(
-             data: SliderThemeData(
-               trackHeight: 1.2,
-               trackShape: const RectangularSliderTrackShape(),
-               activeTrackColor: Colors.white.withOpacity(0.88),
-               inactiveTrackColor: Colors.white.withOpacity(0.28),
-               thumbShape: const RoundSliderThumbShape(
-                 enabledThumbRadius: 10,
-                 elevation: 0,
-               ),
-               thumbColor: Colors.white,
-             ),
-             child: Slider(
-               value: (_zoomLevel - 0.5) / 1.5,
-               onChanged: _isBusy || _isCountingDown
-                   ? null
-                   : (value) async {
-                       final zoom = 0.5 + (value * 1.5);
-                       await _setZoomLevelContinuous(zoom);
-                     },
-               min: 0,
-               max: 1,
-             ),
-           ),
-         ),
-         const SizedBox(width: 12),
-         Text(
-           '2',
-           style: TextStyle(
-             color: Colors.white.withOpacity(0.6),
-             fontSize: 15,
-             fontWeight: FontWeight.w500,
-           ),
-         ),
-       ],
-     ),
-   );
+  Widget _buildStylePanel() {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(24),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.14),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: Colors.white.withOpacity(0.16)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _RulerDial(
+                title: '色温',
+                min: -100,
+                max: 100,
+                step: 1,
+                value: _temperatureValue,
+                onChanged: (next) => setState(() => _temperatureValue = next),
+                valueLabelBuilder: (v) => v.toStringAsFixed(0),
+              ),
+              const SizedBox(height: 8),
+              _RulerDial(
+                title: '色调',
+                min: -100,
+                max: 100,
+                step: 1,
+                value: _tintValue,
+                onChanged: (next) => setState(() => _tintValue = next),
+                valueLabelBuilder: (v) => v.toStringAsFixed(0),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  _TopIconButton(
+                    icon: CupertinoIcons.xmark,
+                    onTap: _toggleStylePanel,
+                  ),
+                  const Spacer(),
+                  _TopIconButton(
+                    icon: CupertinoIcons.refresh,
+                    onTap: _resetStylePanel,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
-  Future<void> _setZoomLevelContinuous(double level) async {
-   try {
-     final controller = _cameraController;
-     if (controller == null || !controller.value.isInitialized) return;
-
-     final minZoom = _minZoomLevel;
-     final maxZoom = _maxZoomLevel;
-     final targetZoom = (level * minZoom).clamp(minZoom, maxZoom);
-
-     await controller.setZoomLevel(targetZoom);
-     if (mounted) {
-       setState(() {
-         _zoomLevel = level;
-       });
-     }
-   } catch (e) {
-     debugPrint('Zoom error: $e');
-   }
+  Widget _buildZoomDial() {
+    return _RulerDial(
+      title: '',
+      min: _zoomUiMin,
+      max: _zoomUiMax,
+      step: 0.1,
+      value: _zoomLevel.clamp(_zoomUiMin, _zoomUiMax),
+      onChanged: (next) => unawaited(_safeSetZoomLevel(next)),
+      valueLabelBuilder: (value) => '${value.toStringAsFixed(1)}x',
+    );
   }
 
   Widget _buildBottomBar() {
@@ -1597,20 +1649,20 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
                 onTap: _isBusy || _isCountingDown ? null : _handleCapturePressed,
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 180),
-                  width: 80,
-                  height: 80,
+                  width: 74,
+                  height: 74,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: Colors.white.withOpacity(_isBusy ? 0.18 : 0.08),
+                    color: Colors.transparent,
                     border: Border.all(
                       color: Colors.white.withOpacity(_isBusy ? 0.55 : 0.88),
-                      width: 4,
+                      width: 3.2,
                     ),
                   ),
                   child: Center(
                     child: Container(
-                      width: 56,
-                      height: 56,
+                      width: 62,
+                      height: 62,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: Colors.white.withOpacity(_isBusy ? 0.55 : 1),
@@ -1632,18 +1684,42 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
     );
   }
 
+  Widget _buildControlArea({required bool fullPreview}) {
+    final content = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const SizedBox(height: 4),
+        _buildZoomDial(),
+        _buildBottomBar(),
+      ],
+    );
+    if (!fullPreview) {
+      return content;
+    }
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(24),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.20),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: Colors.white.withOpacity(0.14)),
+          ),
+          child: content,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(child: _buildStage()),
-            _buildZoomControls(),
-            _buildBottomBar(),
-          ],
-        ),
+        child: _buildStage(),
       ),
     );
   }
@@ -1882,6 +1958,174 @@ class _ChubbyControl extends StatelessWidget {
   }
 }
 
+class _TopIconButton extends StatelessWidget {
+  const _TopIconButton({
+    required this.icon,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(999),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+          child: Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: Colors.white.withOpacity(0.14)),
+            ),
+            child: Icon(icon, color: Colors.white, size: 18),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RulerDial extends StatelessWidget {
+  const _RulerDial({
+    required this.title,
+    required this.min,
+    required this.max,
+    required this.step,
+    required this.value,
+    required this.onChanged,
+    required this.valueLabelBuilder,
+  });
+
+  final String title;
+  final double min;
+  final double max;
+  final double step;
+  final double value;
+  final ValueChanged<double> onChanged;
+  final String Function(double value) valueLabelBuilder;
+
+  @override
+  Widget build(BuildContext context) {
+    final clamped = value.clamp(min, max);
+    final range = math.max(0.0001, max - min);
+    return SizedBox(
+      height: 56,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (title.isNotEmpty)
+            Text(
+              title,
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.78),
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          Expanded(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onHorizontalDragUpdate: (details) {
+                final deltaPercent = details.primaryDelta! / 260;
+                final next = clamped + deltaPercent * range;
+                final snapped = (next / step).roundToDouble() * step;
+                onChanged(snapped.clamp(min, max));
+              },
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  Positioned.fill(
+                    child: CustomPaint(
+                      painter: _RulerPainter(
+                        min: min,
+                        max: max,
+                        step: step,
+                        value: clamped,
+                      ),
+                    ),
+                  ),
+                  Container(
+                    width: 2,
+                    height: 28,
+                    color: const Color(0xFFFFD84D),
+                  ),
+                  Positioned(
+                    top: 2,
+                    child: Text(
+                      valueLabelBuilder(clamped),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RulerPainter extends CustomPainter {
+  _RulerPainter({
+    required this.min,
+    required this.max,
+    required this.step,
+    required this.value,
+  });
+
+  final double min;
+  final double max;
+  final double step;
+  final double value;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final tickPaint = Paint()
+      ..color = Colors.white.withOpacity(0.48)
+      ..strokeWidth = 1;
+    final majorPaint = Paint()
+      ..color = Colors.white.withOpacity(0.9)
+      ..strokeWidth = 1.3;
+    final range = math.max(0.001, max - min);
+    final centerX = size.width / 2;
+    final pxPerUnit = size.width / range;
+    final totalTicks = ((range / step).round() + 1).clamp(2, 1000);
+
+    for (var i = 0; i < totalTicks; i++) {
+      final tickValue = min + i * step;
+      final x = centerX + (tickValue - value) * pxPerUnit;
+      if (x < -20 || x > size.width + 20) continue;
+      final major = i % 5 == 0;
+      final lineHeight = major ? 18.0 : 10.0;
+      final paint = major ? majorPaint : tickPaint;
+      canvas.drawLine(
+        Offset(x, size.height - lineHeight - 4),
+        Offset(x, size.height - 4),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _RulerPainter oldDelegate) {
+    return oldDelegate.value != value ||
+        oldDelegate.min != min ||
+        oldDelegate.max != max ||
+        oldDelegate.step != step;
+  }
+}
+
 class _RoundActionButton extends StatelessWidget {
   const _RoundActionButton({
     required this.icon,
@@ -1988,26 +2232,6 @@ class _CrossHairPainter extends CustomPainter {
   bool shouldRepaint(covariant _CrossHairPainter oldDelegate) {
     return oldDelegate.color != color || oldDelegate.strokeWidth != strokeWidth;
   }
-}
-
-class _GridPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.white.withOpacity(0.16)
-      ..strokeWidth = 0.7;
-
-    const divisions = 3;
-    for (var i = 1; i < divisions; i++) {
-      final dx = size.width * i / divisions;
-      final dy = size.height * i / divisions;
-      canvas.drawLine(Offset(dx, 0), Offset(dx, size.height), paint);
-      canvas.drawLine(Offset(0, dy), Offset(size.width, dy), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class _InlineNotice extends StatelessWidget {
