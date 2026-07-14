@@ -93,6 +93,8 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
   double? _nightModeSavedExposure;
   double _temperatureValue = 0.0;
   double _tintValue = 0.0;
+  double? _temperatureBeforeStylePanel;
+  double? _tintBeforeStylePanel;
 
   Offset? _focusPoint;
   double _focusOpacity = 0.0;
@@ -154,9 +156,9 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
 
   double get _captureAspect {
     return switch (_aspectChoice) {
-      _AspectChoice.fourThree => 3 / 4,
+      _AspectChoice.fourThree => 4 / 3,
       _AspectChoice.oneOne => 1,
-      _AspectChoice.sixteenNine => 9 / 16,
+      _AspectChoice.sixteenNine => 16 / 9,
     };
   }
 
@@ -438,15 +440,26 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
   void _togglePanel() => _setPanelExpanded(!_panelExpanded);
 
   void _toggleStylePanel() {
+    final opening = !_stylePanelExpanded;
     setState(() {
-      _stylePanelExpanded = !_stylePanelExpanded;
-      if (_stylePanelExpanded) {
+      _stylePanelExpanded = opening;
+      if (opening) {
+        _temperatureBeforeStylePanel = _temperatureValue;
+        _tintBeforeStylePanel = _tintValue;
         _panelExpanded = false;
       }
     });
     if (_stylePanelExpanded) {
       _panelController.reverse();
     }
+  }
+
+  void _closeStylePanelCancel() {
+    setState(() {
+      _temperatureValue = _temperatureBeforeStylePanel ?? _temperatureValue;
+      _tintValue = _tintBeforeStylePanel ?? _tintValue;
+      _stylePanelExpanded = false;
+    });
   }
 
   void _resetStylePanel() {
@@ -1059,64 +1072,29 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
       builder: (context, constraints) {
         final stageWidth = constraints.maxWidth;
         final stageHeight = constraints.maxHeight;
-        final basePreviewHeight = math.min(stageHeight, stageWidth * (4 / 3));
         final fullPreview = _aspectChoice == _AspectChoice.sixteenNine;
-        final previewHeight = fullPreview ? stageHeight : basePreviewHeight;
-        final double captureHeight = switch (_aspectChoice) {
-          _AspectChoice.oneOne => math.min(stageWidth, previewHeight),
+        final previewWidth = stageWidth;
+        final previewHeight = fullPreview
+            ? stageHeight
+            : math.min(stageHeight, previewWidth * (4 / 3));
+        final previewTop = fullPreview ? 0.0 : (stageHeight - previewHeight) / 2;
+        final previewRect = Rect.fromLTWH(
+          (stageWidth - previewWidth) / 2,
+          previewTop,
+          previewWidth,
+          previewHeight,
+        );
+        final captureHeight = switch (_aspectChoice) {
           _AspectChoice.fourThree => previewHeight,
-          _AspectChoice.sixteenNine => stageHeight,
+          _AspectChoice.oneOne => math.min(previewWidth, previewHeight),
+          _AspectChoice.sixteenNine => previewHeight,
         };
         final controller = _cameraController;
         final previewAspect = controller?.value.aspectRatio ?? (4 / 3);
-        const controlsHeight = 176.0;
-
-        final previewRegion = SizedBox(
-          width: stageWidth,
-          height: previewHeight,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTapDown: (details) {
-              if (_isBusy || _isCountingDown) return;
-              if (details.localPosition.dy < 0 ||
-                  details.localPosition.dy > captureHeight ||
-                  details.localPosition.dx < 0 ||
-                  details.localPosition.dx > stageWidth) {
-                return;
-              }
-              _presentFocusRing(details.localPosition);
-              _exposureBase = _exposureOffset;
-              final normalized = Offset(
-                (details.localPosition.dx / stageWidth).clamp(0.0, 1.0),
-                (details.localPosition.dy / captureHeight).clamp(0.0, 1.0),
-              );
-              unawaited(_safeSetFocusAndExposurePoint(normalized));
-            },
-            onScaleStart: (_) => _onScaleStart(),
-            onScaleUpdate: _onScaleUpdate,
-            onVerticalDragStart: (_) => _onFocusDragStart(),
-            onVerticalDragUpdate: _applyFocusDrag,
-            onVerticalDragEnd: _onVerticalSwipeEnd,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                Positioned.fill(child: _buildPreviewContent(previewAspect)),
-                if (_aspectChoice == _AspectChoice.oneOne &&
-                    previewHeight > captureHeight)
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    top: captureHeight,
-                    bottom: 0,
-                    child: const ColoredBox(color: Colors.black),
-                  ),
-              ],
-            ),
-          ),
-        );
+        const controlsHeight = 132.0;
 
         final topControls = Positioned(
-          top: 10,
+          top: fullPreview ? 8 : 10,
           left: 12,
           right: 12,
           child: SizedBox(
@@ -1141,29 +1119,87 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
 
         final focusConstraints = BoxConstraints.tightFor(
           width: stageWidth,
-          height: captureHeight,
+          height: stageHeight,
         );
         final double loadingBottom =
             fullPreview ? controlsHeight + 24 : 24;
+        final bottomMaskHeight = _aspectChoice == _AspectChoice.oneOne
+            ? math.max(0.0, previewRect.width / 3)
+            : 0.0;
 
         return Stack(
           fit: StackFit.expand,
           children: [
             const ColoredBox(color: Colors.black),
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              height: previewHeight,
-              child: previewRegion,
+            // Bottom layer: physically stable camera view (3:4) or full 16:9.
+            Positioned.fromRect(
+              rect: previewRect,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapDown: (details) {
+                  if (_isBusy || _isCountingDown) return;
+                  final dx = details.localPosition.dx;
+                  final dy = details.localPosition.dy;
+                  if (dx < 0 ||
+                      dx > previewRect.width ||
+                      dy < 0 ||
+                      dy > captureHeight) {
+                    return;
+                  }
+                  _presentFocusRing(
+                    Offset(previewRect.left + dx, previewRect.top + dy),
+                  );
+                  _exposureBase = _exposureOffset;
+                  final normalized = Offset(
+                    (dx / previewRect.width).clamp(0.0, 1.0),
+                    (dy / captureHeight).clamp(0.0, 1.0),
+                  );
+                  unawaited(_safeSetFocusAndExposurePoint(normalized));
+                },
+                onScaleStart: (_) => _onScaleStart(),
+                onScaleUpdate: _onScaleUpdate,
+                onVerticalDragStart: (_) => _onFocusDragStart(),
+                onVerticalDragUpdate: _applyFocusDrag,
+                onVerticalDragEnd: _onVerticalSwipeEnd,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Positioned.fill(
+                      child: Center(
+                        child: fullPreview
+                            ? _buildPreviewContent(previewAspect)
+                            : AspectRatio(
+                                aspectRatio: 3 / 4,
+                                child: _buildPreviewContent(previewAspect),
+                              ),
+                      ),
+                    ),
+                    if (bottomMaskHeight > 0)
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        height: bottomMaskHeight,
+                        child: const ColoredBox(color: Colors.black),
+                      ),
+                  ],
+                ),
+              ),
             ),
             Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
+              top: previewRect.top,
+              left: previewRect.left,
+              right: stageWidth - previewRect.right,
               height: captureHeight,
               child: _buildCenterLevel(),
             ),
+            if (fullPreview)
+              const Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: _FrostedStrip(height: 58),
+              ),
             topControls,
             if (_panelExpanded)
               Positioned(
@@ -1578,31 +1614,23 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _RulerDial(
+              _StyleSliderRow(
                 title: '色温',
-                min: -100,
-                max: 100,
-                step: 1,
                 value: _temperatureValue,
                 onChanged: (next) => setState(() => _temperatureValue = next),
-                valueLabelBuilder: (v) => v.toStringAsFixed(0),
               ),
               const SizedBox(height: 8),
-              _RulerDial(
+              _StyleSliderRow(
                 title: '色调',
-                min: -100,
-                max: 100,
-                step: 1,
                 value: _tintValue,
                 onChanged: (next) => setState(() => _tintValue = next),
-                valueLabelBuilder: (v) => v.toStringAsFixed(0),
               ),
               const SizedBox(height: 10),
               Row(
                 children: [
                   _TopIconButton(
                     icon: CupertinoIcons.xmark,
-                    onTap: _toggleStylePanel,
+                    onTap: _closeStylePanelCancel,
                   ),
                   const Spacer(),
                   _TopIconButton(
@@ -1618,21 +1646,9 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildZoomDial() {
-    return _RulerDial(
-      title: '',
-      min: _zoomUiMin,
-      max: _zoomUiMax,
-      step: 0.1,
-      value: _zoomLevel.clamp(_zoomUiMin, _zoomUiMax),
-      onChanged: (next) => unawaited(_safeSetZoomLevel(next)),
-      valueLabelBuilder: (value) => '${value.toStringAsFixed(1)}x',
-    );
-  }
-
   Widget _buildBottomBar() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
       child: Row(
         children: [
           _RoundActionButton(
@@ -1673,26 +1689,14 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
               ),
             ),
           ),
-          const SizedBox(width: 16),
-          _RoundActionButton(
-            icon: CupertinoIcons.crop,
-            label: _aspectChoice.label,
-            onTap: !_isBusy && !_isCountingDown ? _openAspectMenu : null,
-          ),
+          const SizedBox(width: 82),
         ],
       ),
     );
   }
 
   Widget _buildControlArea({required bool fullPreview}) {
-    final content = Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const SizedBox(height: 4),
-        _buildZoomDial(),
-        _buildBottomBar(),
-      ],
-    );
+    final content = _buildBottomBar();
     if (!fullPreview) {
       return content;
     }
@@ -1991,138 +1995,84 @@ class _TopIconButton extends StatelessWidget {
   }
 }
 
-class _RulerDial extends StatelessWidget {
-  const _RulerDial({
+class _StyleSliderRow extends StatelessWidget {
+  const _StyleSliderRow({
     required this.title,
-    required this.min,
-    required this.max,
-    required this.step,
     required this.value,
     required this.onChanged,
-    required this.valueLabelBuilder,
   });
 
   final String title;
-  final double min;
-  final double max;
-  final double step;
   final double value;
   final ValueChanged<double> onChanged;
-  final String Function(double value) valueLabelBuilder;
 
   @override
   Widget build(BuildContext context) {
-    final clamped = value.clamp(min, max);
-    final range = math.max(0.0001, max - min);
-    return SizedBox(
-      height: 56,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (title.isNotEmpty)
+    final clamped = value.clamp(-1.0, 1.0);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
             Text(
               title,
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.78),
-                fontSize: 11,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12,
                 fontWeight: FontWeight.w700,
               ),
             ),
-          Expanded(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onHorizontalDragUpdate: (details) {
-                final deltaPercent = details.primaryDelta! / 260;
-                final next = clamped + deltaPercent * range;
-                final snapped = (next / step).roundToDouble() * step;
-                onChanged(snapped.clamp(min, max));
-              },
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  Positioned.fill(
-                    child: CustomPaint(
-                      painter: _RulerPainter(
-                        min: min,
-                        max: max,
-                        step: step,
-                        value: clamped,
-                      ),
-                    ),
-                  ),
-                  Container(
-                    width: 2,
-                    height: 28,
-                    color: const Color(0xFFFFD84D),
-                  ),
-                  Positioned(
-                    top: 2,
-                    child: Text(
-                      valueLabelBuilder(clamped),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ],
+            const Spacer(),
+            Text(
+              clamped.toStringAsFixed(2),
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.76),
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
               ),
             ),
+          ],
+        ),
+        SliderTheme(
+          data: SliderTheme.of(context).copyWith(
+            activeTrackColor: Colors.white.withOpacity(0.92),
+            inactiveTrackColor: Colors.white.withOpacity(0.25),
+            trackHeight: 3,
+            thumbColor: const Color(0xFFFFD84D),
+            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 9),
+            overlayShape: const RoundSliderOverlayShape(overlayRadius: 18),
           ),
-        ],
-      ),
+          child: Slider(
+            value: clamped,
+            min: -1.0,
+            max: 1.0,
+            divisions: 40,
+            onChanged: onChanged,
+          ),
+        ),
+      ],
     );
   }
 }
 
-class _RulerPainter extends CustomPainter {
-  _RulerPainter({
-    required this.min,
-    required this.max,
-    required this.step,
-    required this.value,
-  });
+class _FrostedStrip extends StatelessWidget {
+  const _FrostedStrip({required this.height});
 
-  final double min;
-  final double max;
-  final double step;
-  final double value;
+  final double height;
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final tickPaint = Paint()
-      ..color = Colors.white.withOpacity(0.48)
-      ..strokeWidth = 1;
-    final majorPaint = Paint()
-      ..color = Colors.white.withOpacity(0.9)
-      ..strokeWidth = 1.3;
-    final range = math.max(0.001, max - min);
-    final centerX = size.width / 2;
-    final pxPerUnit = size.width / range;
-    final totalTicks = ((range / step).round() + 1).clamp(2, 1000);
-
-    for (var i = 0; i < totalTicks; i++) {
-      final tickValue = min + i * step;
-      final x = centerX + (tickValue - value) * pxPerUnit;
-      if (x < -20 || x > size.width + 20) continue;
-      final major = i % 5 == 0;
-      final lineHeight = major ? 18.0 : 10.0;
-      final paint = major ? majorPaint : tickPaint;
-      canvas.drawLine(
-        Offset(x, size.height - lineHeight - 4),
-        Offset(x, size.height - 4),
-        paint,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _RulerPainter oldDelegate) {
-    return oldDelegate.value != value ||
-        oldDelegate.min != min ||
-        oldDelegate.max != max ||
-        oldDelegate.step != step;
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: ClipRRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+          child: Container(
+            height: height,
+            color: Colors.black.withOpacity(0.24),
+          ),
+        ),
+      ),
+    );
   }
 }
 
