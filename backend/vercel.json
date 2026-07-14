@@ -8,6 +8,10 @@
     {
       "src": "/api/verify",
       "dest": "/api/verify.js"
+    },
+    {
+      "src": "/api/lookup",
+      "dest": "/api/lookup.js"
     }
   ]
 }

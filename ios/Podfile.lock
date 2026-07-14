@@ -2,7 +2,12 @@ PODS:
   - camera_avfoundation (0.0.1):
     - Flutter
   - Flutter (1.0.0)
+  - gal (1.0.0):
+    - Flutter
+    - FlutterMacOS
   - geolocator_apple (1.2.0):
+    - Flutter
+  - native_exif (0.0.1):
     - Flutter
   - path_provider_foundation (0.0.1):
     - Flutter
@@ -13,7 +18,9 @@ PODS:
 DEPENDENCIES:
   - camera_avfoundation (from `.symlinks/plugins/camera_avfoundation/ios`)
   - Flutter (from `Flutter`)
+  - gal (from `.symlinks/plugins/gal/darwin`)
   - geolocator_apple (from `.symlinks/plugins/geolocator_apple/ios`)
+  - native_exif (from `.symlinks/plugins/native_exif/ios`)
   - path_provider_foundation (from `.symlinks/plugins/path_provider_foundation/darwin`)
   - permission_handler_apple (from `.symlinks/plugins/permission_handler_apple/ios`)
 
@@ -22,8 +29,12 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/camera_avfoundation/ios"
   Flutter:
     :path: Flutter
+  gal:
+    :path: ".symlinks/plugins/gal/darwin"
   geolocator_apple:
     :path: ".symlinks/plugins/geolocator_apple/ios"
+  native_exif:
+    :path: ".symlinks/plugins/native_exif/ios"
   path_provider_foundation:
     :path: ".symlinks/plugins/path_provider_foundation/darwin"
   permission_handler_apple:
@@ -32,7 +43,9 @@ EXTERNAL SOURCES:
 SPEC CHECKSUMS:
   camera_avfoundation: be3be85408cd4126f250386828e9b1dfa40ab436
   Flutter: e0871f40cf51350855a761d2e70bf5af5b9b5de7
+  gal: baecd024ebfd13c441269ca7404792a7152fde89
   geolocator_apple: 1560c3c875af2a412242c7a923e15d0d401966ff
+  native_exif: 0eb73d3d5b3ca892719228df8d2d1b13d1ae396c
   path_provider_foundation: 080d55be775b7414fd5a5ef3ac137b97b097e564
   permission_handler_apple: 92d754bbaa7361d436db2d6c3c1c2a0fdcec462e
 

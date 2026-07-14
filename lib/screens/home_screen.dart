@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:image/image.dart' as img;
+import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -15,6 +16,7 @@ import '../services/crypto_service.dart';
 import '../services/exif_service.dart';
 import '../services/metadata_service.dart';
 import '../services/watermark_service.dart';
+import 'verification_detail_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
@@ -35,6 +37,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final CryptoService _cryptoService = const CryptoService();
   final WatermarkService _watermarkService = const WatermarkService();
   final ExifService _exifService = const ExifService();
+  final ImagePicker _imagePicker = ImagePicker();
   final http.Client _httpClient = http.Client();
 
   CameraController? _cameraController;
@@ -46,6 +49,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   File? _capturedImageFile;
   Map<String, dynamic>? _capturedMetadata;
+  Map<String, dynamic>? _cloudStamp;
   String? _capturedHash;
   bool _uploadSucceeded = false;
   bool _gallerySaved = false;
@@ -204,6 +208,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _capturedImageFile = mockFile;
         _capturedMetadata = metadata;
         _capturedHash = hash;
+        _cloudStamp = null;
         _loadingMessage = '正在同步至云端...';
       });
 
@@ -279,6 +284,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _capturedImageFile = photoFile;
         _capturedMetadata = metadata;
         _capturedHash = hash;
+        _cloudStamp = null;
         _loadingMessage = '正在同步至云端...';
       });
 
@@ -350,6 +356,13 @@ class _HomeScreenState extends State<HomeScreen> {
         _uploadSucceeded = true;
         _uploadError = null;
       });
+
+      final stamp = await _lookupStamp(hash);
+      if (mounted && stamp != null) {
+        setState(() {
+          _cloudStamp = stamp['stamp'] as Map<String, dynamic>?;
+        });
+      }
 
       await _protectAndSaveCapturedImage();
     } on TimeoutException {
@@ -490,6 +503,7 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _capturedImageFile = null;
       _capturedMetadata = null;
+      _cloudStamp = null;
       _capturedHash = null;
       _uploadError = null;
       _saveError = null;
@@ -501,6 +515,159 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _openSettings() async {
     await openAppSettings();
+  }
+
+  Future<void> _importAndVerify() async {
+    if (_isBusy) {
+      return;
+    }
+
+    final picked = await _imagePicker.pickImage(source: ImageSource.gallery);
+    if (picked == null) {
+      return;
+    }
+
+    final importedFile = File(picked.path);
+    if (!await importedFile.exists()) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = '所选图片不存在，无法继续鉴别。';
+      });
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _loadingMessage = '正在本地提取 EXIF 与盲水印...';
+      _errorMessage = null;
+      _uploadError = null;
+      _saveError = null;
+    });
+
+    try {
+      final exifHash = await _exifService.extractExifHash(importedFile);
+      final watermarkPayload =
+          await _watermarkService.extractInvisibleWatermark(importedFile);
+
+      final watermarkHash = _extractHashFromWatermarkPayload(watermarkPayload);
+      final effectiveHash = exifHash ?? watermarkHash;
+      if (effectiveHash == null) {
+        throw StateError('未在图片中提取到可验证的 EXIF 哈希或盲水印。');
+      }
+
+      if (exifHash != null &&
+          watermarkHash != null &&
+          exifHash != watermarkHash) {
+        throw StateError('EXIF 哈希与盲水印哈希不一致，图片可能被篡改。');
+      }
+
+      final lookup = await _lookupStamp(effectiveHash);
+      if (!mounted) return;
+
+      if (lookup == null) {
+        setState(() {
+          _loadingMessage = null;
+          _errorMessage = '云端未找到对应记录。';
+        });
+        return;
+      }
+
+      final stamp = lookup['stamp'] as Map<String, dynamic>;
+      final verifyUrl = _verificationUrlForHash(effectiveHash);
+      setState(() {
+        _loadingMessage = null;
+      });
+
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => VerificationDetailScreen(
+            hash: stamp['hash']?.toString() ?? effectiveHash,
+            timestamp: stamp['timestamp']?.toString() ?? '-',
+            latitude: stamp['latitude']?.toString() ?? '-',
+            longitude: stamp['longitude']?.toString() ?? '-',
+            accuracy: stamp['accuracy']?.toString() ?? '-',
+            createdAt: stamp['created_at']?.toString() ?? '-',
+            verifyUrl: verifyUrl,
+          ),
+        ),
+      );
+    } on Exception catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loadingMessage = null;
+        _errorMessage = '导入鉴别失败：$error';
+      });
+    }
+  }
+
+  String? _extractHashFromWatermarkPayload(String? payload) {
+    if (payload == null || payload.isEmpty) {
+      return null;
+    }
+
+    final uri = Uri.tryParse(payload);
+    final hashFromUrl = uri?.queryParameters['hash'];
+    if (hashFromUrl != null && hashFromUrl.isNotEmpty) {
+      return hashFromUrl;
+    }
+
+    return payload.trim();
+  }
+
+  Future<Map<String, dynamic>?> _lookupStamp(String hash) async {
+    final response = await _httpClient
+        .get(
+          Uri.parse('$_backendBaseUrl/api/lookup')
+              .replace(queryParameters: <String, String>{'hash': hash}),
+        )
+        .timeout(const Duration(seconds: 15));
+
+    if (response.statusCode == 404) {
+      return null;
+    }
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(_extractUploadError(response.body, response.statusCode));
+    }
+
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic> || decoded['found'] != true) {
+      return null;
+    }
+
+    final stamp = decoded['stamp'];
+    if (stamp is! Map<String, dynamic>) {
+      return null;
+    }
+
+    return <String, dynamic>{'stamp': stamp};
+  }
+
+  Future<void> _openCurrentVerificationDetail() async {
+    final metadata = _capturedMetadata;
+    final hash = _capturedHash;
+    final cloudStamp = _cloudStamp;
+    if (metadata == null || hash == null) {
+      return;
+    }
+
+    final verifyUrl = _verificationUrlForHash(hash);
+    final createdAt = cloudStamp?['created_at']?.toString() ??
+        DateTime.now().toIso8601String();
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => VerificationDetailScreen(
+          hash: hash,
+          timestamp: metadata['timestamp']?.toString() ?? '-',
+          latitude: metadata['latitude']?.toString() ?? '-',
+          longitude: metadata['longitude']?.toString() ?? '-',
+          accuracy: metadata['accuracy']?.toString() ?? '-',
+          createdAt: createdAt,
+          verifyUrl: verifyUrl,
+        ),
+      ),
+    );
   }
 
   String _formatNumber(double value) => value.toStringAsFixed(6);
@@ -722,13 +889,39 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 12),
             Text(
-              '其他人扫码后将打开云端存证校验页。',
+              '扫码后即可进入云端验证页。',
               style: Theme.of(context).textTheme.bodyMedium,
             ),
-            const SizedBox(height: 8),
-            SelectableText(
-              verificationUrl,
-              style: Theme.of(context).textTheme.bodySmall,
+            const SizedBox(height: 14),
+            Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(24),
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF34C759), Color(0xFF0A8F3E)],
+                ),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x220A8F3E),
+                    blurRadius: 24,
+                    offset: Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.transparent,
+                  shadowColor: Colors.transparent,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                ),
+                onPressed: _gallerySaved ? _openCurrentVerificationDetail : null,
+                child: const Text(
+                  '查看鉴别详情',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
             ),
           ],
         ),
@@ -756,28 +949,48 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildActions() {
+    final importButton = FilledButton.tonalIcon(
+      onPressed: _isBusy ? null : _importAndVerify,
+      icon: const Icon(Icons.photo_library_outlined),
+      label: const Text('导入鉴别'),
+    );
+
     // ── Mock 模式（模拟器，无相机）──────────────────────────
     if (_isMockMode) {
       if (_capturedHash == null) {
-        return FilledButton.icon(
-          onPressed: _isBusy ? null : _mockCaptureAndUpload,
-          icon: const Icon(Icons.science_outlined),
-          label: const Text('模拟拍照并上传 (Mock)'),
-        );
-      }
-      return Row(
-        children: [
-          Expanded(
-            child: FilledButton.icon(
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            importButton,
+            const SizedBox(height: 12),
+            FilledButton.icon(
               onPressed: _isBusy ? null : _mockCaptureAndUpload,
               icon: const Icon(Icons.science_outlined),
-              label: const Text('重新模拟'),
+              label: const Text('模拟拍照并上传 (Mock)'),
             ),
-          ),
-          const SizedBox(width: 12),
-          OutlinedButton(
-            onPressed: _isBusy ? null : _retake,
-            child: const Text('重置'),
+          ],
+        );
+      }
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          importButton,
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: _isBusy ? null : _mockCaptureAndUpload,
+                  icon: const Icon(Icons.science_outlined),
+                  label: const Text('重新模拟'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              OutlinedButton(
+                onPressed: _isBusy ? null : _retake,
+                child: const Text('重置'),
+              ),
+            ],
           ),
         ],
       );
@@ -785,26 +998,40 @@ class _HomeScreenState extends State<HomeScreen> {
 
     // ── 正常相机模式 ─────────────────────────────────────
     if (_capturedHash == null) {
-      return FilledButton.icon(
-        onPressed: _isBusy ? null : _captureAndUpload,
-        icon: const Icon(Icons.camera_alt),
-        label: const Text('拍照并上传'),
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          importButton,
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: _isBusy ? null : _captureAndUpload,
+            icon: const Icon(Icons.camera_alt),
+            label: const Text('拍照并上传'),
+          ),
+        ],
       );
     }
 
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Expanded(
-          child: FilledButton.icon(
-            onPressed: _isBusy ? null : _captureAndUpload,
-            icon: const Icon(Icons.upload_rounded),
-            label: const Text('重试上传'),
-          ),
-        ),
-        const SizedBox(width: 12),
-        OutlinedButton(
-          onPressed: _isBusy ? null : _retake,
-          child: const Text('重拍'),
+        importButton,
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: _isBusy ? null : _captureAndUpload,
+                icon: const Icon(Icons.upload_rounded),
+                label: const Text('重试上传'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            OutlinedButton(
+              onPressed: _isBusy ? null : _retake,
+              child: const Text('重拍'),
+            ),
+          ],
         ),
       ],
     );
