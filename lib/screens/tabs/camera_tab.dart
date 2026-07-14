@@ -1,20 +1,15 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math' as math;
-import 'dart:ui';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
-import 'package:image/image.dart' as img;
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
+import '../verification_detail_screen.dart';
 import '../../services/crypto_service.dart';
 import '../../services/exif_service.dart';
 import '../../services/metadata_service.dart';
@@ -35,131 +30,45 @@ class CameraTab extends StatefulWidget {
   State<CameraTab> createState() => _CameraTabState();
 }
 
-enum _FlashChoice { auto, on, off }
+class _CameraCaptureResult {
+  const _CameraCaptureResult({
+    required this.hash,
+    required this.timestamp,
+    required this.latitude,
+    required this.longitude,
+    required this.accuracy,
+    required this.createdAt,
+    required this.verifyUrl,
+  });
 
-enum _TimerChoice { off, three, five, ten }
-
-enum _AspectChoice { fourThree, oneOne, sixteenNine }
-
-extension _AspectChoiceX on _AspectChoice {
-  String get label {
-    switch (this) {
-      case _AspectChoice.fourThree:
-        return '4:3';
-      case _AspectChoice.oneOne:
-        return '1:1';
-      case _AspectChoice.sixteenNine:
-        return '16:9';
-    }
-  }
+  final String hash;
+  final String timestamp;
+  final String latitude;
+  final String longitude;
+  final String accuracy;
+  final String createdAt;
+  final String verifyUrl;
 }
 
-class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
+class _CameraTabState extends State<CameraTab> {
   static const String _backendBaseUrl = 'https://truth-stamp.vercel.app';
 
   final MetadataService _metadataService = const MetadataService();
   final CryptoService _cryptoService = const CryptoService();
   final WatermarkService _watermarkService = const WatermarkService();
   final ExifService _exifService = const ExifService();
+  final ImagePicker _imagePicker = ImagePicker();
   final http.Client _httpClient = http.Client();
 
-  CameraController? _cameraController;
-  int _cameraIndex = 0;
-
-  bool _isBusy = false;
-  bool _isCountingDown = false;
-  bool _panelExpanded = false;
-  bool _stylePanelExpanded = false;
-  bool _nightMode = false;
-  bool _focusRingVisible = false;
-  bool _showCaptureSpinner = false;
-
-  String? _loadingMessage;
+  bool _isProcessing = false;
+  String? _progressMessage;
   String? _errorMessage;
-
-  _FlashChoice _flashChoice = _FlashChoice.auto;
-  _TimerChoice _timerChoice = _TimerChoice.off;
-  _AspectChoice _aspectChoice = _AspectChoice.fourThree;
-
-  double _zoomLevel = 1.0;
-  double _minZoomLevel = 1.0;
-  double _maxZoomLevel = 1.0;
-  double _zoomBase = 1.0;
-
-  double _exposureOffset = 0.0;
-  double _minExposureOffset = -2.0;
-  double _maxExposureOffset = 2.0;
-  double _exposureBase = 0.0;
-  double? _nightModeSavedExposure;
-  double _temperatureValue = 0.0;
-  double _tintValue = 0.0;
-  double? _temperatureBeforeStylePanel;
-  double? _tintBeforeStylePanel;
-
-  Offset? _focusPoint;
-  double _focusOpacity = 0.0;
-  Timer? _focusFadeTimer;
-  Timer? _countdownTimer;
-  int? _countdownRemaining;
-  DateTime? _lastLevelHaptic;
-
-  late final AnimationController _panelController = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 260),
-  );
-
-  late final AnimationController _levelController = AnimationController(
-    vsync: this,
-    duration: const Duration(seconds: 4),
-  )..repeat();
-
-  @override
-  void initState() {
-    super.initState();
-    _initializeCamera();
-  }
-
-  @override
-  void didUpdateWidget(covariant CameraTab oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (!listEquals(oldWidget.cameras, widget.cameras)) {
-      _initializeCamera();
-    }
-  }
+  _CameraCaptureResult? _lastResult;
 
   @override
   void dispose() {
-    _focusFadeTimer?.cancel();
-    _countdownTimer?.cancel();
-    _panelController.dispose();
-    _levelController.dispose();
     _httpClient.close();
-    _cameraController?.dispose();
     super.dispose();
-  }
-
-  bool get _isMockMode => widget.cameras.isEmpty;
-
-  bool get _cameraReady =>
-      _cameraController != null && _cameraController!.value.isInitialized;
-
-  CameraDescription? get _selectedCamera {
-    if (widget.cameras.isEmpty) return null;
-    if (_cameraIndex >= 0 && _cameraIndex < widget.cameras.length) {
-      return widget.cameras[_cameraIndex];
-    }
-    return widget.cameras.first;
-  }
-
-  double get _zoomUiMin => math.max(1.0, _minZoomLevel);
-  double get _zoomUiMax => math.min(2.0, _maxZoomLevel);
-
-  double get _captureAspect {
-    return switch (_aspectChoice) {
-      _AspectChoice.fourThree => 4 / 3,
-      _AspectChoice.oneOne => 1,
-      _AspectChoice.sixteenNine => 16 / 9,
-    };
   }
 
   String _verificationUrlForHash(String hash) {
@@ -168,758 +77,106 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
         .toString();
   }
 
-  Future<void> _initializeCamera() async {
+  Future<void> _openSystemCamera() async {
+    if (_isProcessing) return;
     if (widget.cameras.isEmpty) {
-      if (!mounted) return;
-      setState(() => _errorMessage = null);
+      setState(() {
+        _errorMessage = '当前设备未检测到可用摄像头。';
+      });
       return;
     }
 
-    final permission = await Permission.camera.status;
-    if (!permission.isGranted) {
-      final request = await Permission.camera.request();
-      if (!request.isGranted) {
-        if (!mounted) return;
-        setState(() {
-          _errorMessage = request.isPermanentlyDenied
-              ? 'Camera permission is permanently denied. Please enable it in Settings.'
-              : 'Camera permission is required to use the camera.';
-        });
-        return;
-      }
-    }
-
-    final selected = _selectedCamera;
-    if (selected == null) {
-      if (!mounted) return;
-      setState(() => _errorMessage = 'No usable camera was found on this device.');
-      return;
-    }
-
-    final controller = CameraController(
-      selected,
-      ResolutionPreset.high,
-      enableAudio: false,
-    );
-
-    try {
-      await controller.initialize();
-      await _applyControllerCapabilities(controller);
-
-      if (!mounted) {
-        await controller.dispose();
-        return;
-      }
-
-      await _cameraController?.dispose();
-      setState(() {
-        _cameraController = controller;
-        _errorMessage = null;
-      });
-      await _safeSetFlashMode(_flashChoice);
-      if (_nightMode) {
-        await _applyNightMode(true, fromInitialization: true);
-      }
-    } on CameraException catch (error) {
-      await controller.dispose();
-      if (!mounted) return;
-      setState(() {
-        _errorMessage =
-            'Failed to initialize camera: ${error.description ?? error.code}';
-      });
-    } on Exception catch (error) {
-      await controller.dispose();
-      if (!mounted) return;
-      setState(() => _errorMessage = 'Failed to initialize camera: $error');
-    }
-  }
-
-  Future<void> _applyControllerCapabilities(CameraController controller) async {
-    try {
-      _minZoomLevel = await controller.getMinZoomLevel();
-    } on Exception {
-      _minZoomLevel = 1.0;
-    }
-
-    try {
-      _maxZoomLevel = await controller.getMaxZoomLevel();
-    } on Exception {
-      _maxZoomLevel = math.max(_minZoomLevel, 1.0);
-    }
-
-    try {
-      _minExposureOffset = await controller.getMinExposureOffset();
-    } on Exception {
-      _minExposureOffset = -2.0;
-    }
-
-    try {
-      _maxExposureOffset = await controller.getMaxExposureOffset();
-    } on Exception {
-      _maxExposureOffset = 2.0;
-    }
-
-    _zoomLevel = _zoomLevel.clamp(_zoomUiMin, _zoomUiMax);
-    _exposureOffset = _exposureOffset.clamp(_minExposureOffset, _maxExposureOffset);
-
-    try {
-      await controller.setZoomLevel(_zoomLevel);
-    } on Exception {
-      // Ignore unsupported zoom.
-    }
-
-    try {
-      await controller.setExposureOffset(_exposureOffset);
-    } on Exception {
-      // Ignore unsupported exposure.
-    }
-  }
-
-  Future<void> _safeSetFlashMode(_FlashChoice choice) async {
-    final controller = _cameraController;
-    if (controller == null || !controller.value.isInitialized) return;
-
-    try {
-      final mode = switch (choice) {
-        _FlashChoice.auto => FlashMode.auto,
-        _FlashChoice.on => FlashMode.always,
-        _FlashChoice.off => FlashMode.off,
-      };
-      await controller.setFlashMode(mode);
-      if (!mounted) return;
-      setState(() => _flashChoice = choice);
-    } on Exception catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _errorMessage = 'Flash mode is unavailable: $error';
-      });
-    }
-  }
-
-  Future<void> _safeSetZoomLevel(double target) async {
-    final controller = _cameraController;
-    if (controller == null || !controller.value.isInitialized) return;
-
-    final clamped = target.clamp(_zoomUiMin, _zoomUiMax);
-    if ((clamped - _zoomLevel).abs() < 0.01) return;
-
-    try {
-      await controller.setZoomLevel(clamped);
-      if (!mounted) return;
-      setState(() => _zoomLevel = clamped);
-    } on Exception catch (error) {
-      if (!mounted) return;
-      setState(() => _errorMessage = 'Zoom control is unavailable: $error');
-    }
-  }
-
-  Future<void> _safeSetExposureOffset(double target) async {
-    final controller = _cameraController;
-    if (controller == null || !controller.value.isInitialized) return;
-
-    final clamped = target.clamp(_minExposureOffset, _maxExposureOffset);
-    if ((clamped - _exposureOffset).abs() < 0.01) return;
-
-    try {
-      await controller.setExposureOffset(clamped);
-      if (!mounted) return;
-      setState(() => _exposureOffset = clamped);
-    } on Exception catch (error) {
-      if (!mounted) return;
-      setState(() => _errorMessage = 'Exposure control is unavailable: $error');
-    }
-  }
-
-  Future<void> _safeSetFocusAndExposurePoint(Offset normalizedPoint) async {
-    final controller = _cameraController;
-    if (controller == null || !controller.value.isInitialized) return;
-
-    try {
-      await controller.setFocusPoint(normalizedPoint);
-    } on Exception catch (_) {
-      // Some devices do not support focus point.
-    }
-
-    try {
-      await controller.setExposurePoint(normalizedPoint);
-    } on Exception catch (_) {
-      // Some devices do not support exposure point.
-    }
-  }
-
-  Future<void> _switchCamera() async {
-    if (_isBusy || _isCountingDown || widget.cameras.length < 2) return;
-
-    final current = _selectedCamera;
-    if (current == null) return;
-
-    final back = widget.cameras
-        .indexWhere((camera) => camera.lensDirection == CameraLensDirection.back);
-    final front = widget.cameras
-        .indexWhere((camera) => camera.lensDirection == CameraLensDirection.front);
-    final targetIndex = current.lensDirection == CameraLensDirection.back
-        ? (front == -1 ? _cameraIndex : front)
-        : (back == -1 ? _cameraIndex : back);
-
-    if (targetIndex == _cameraIndex) return;
-
-    setState(() => _cameraIndex = targetIndex);
-    await _cameraController?.dispose();
-    _cameraController = null;
-    await _initializeCamera();
-  }
-
-  void _resetFocusFadeTimer() {
-    _focusFadeTimer?.cancel();
-    _focusFadeTimer = Timer(const Duration(seconds: 3), () {
-      if (!mounted) return;
-      setState(() {
-        _focusRingVisible = false;
-        _focusOpacity = 0.0;
-        _focusPoint = null;
-      });
-      unawaited(_safeSetFocusAndExposurePoint(const Offset(0.5, 0.5)));
-    });
-  }
-
-  void _presentFocusRing(Offset localPosition) {
-    final controller = _cameraController;
-    if (controller == null || !controller.value.isInitialized) return;
-
     setState(() {
-      _focusPoint = localPosition;
-      _focusRingVisible = true;
-      _focusOpacity = 1.0;
-    });
-    _resetFocusFadeTimer();
-    HapticFeedback.lightImpact();
-  }
-
-  void _applyFocusDrag(DragUpdateDetails details) {
-    final controller = _cameraController;
-    if (controller == null || !controller.value.isInitialized) return;
-    if (!_focusRingVisible || _focusPoint == null) return;
-
-    final delta = -details.primaryDelta!;
-    final range = _maxExposureOffset - _minExposureOffset;
-    final next = _exposureBase + (delta * range / 220.0);
-    unawaited(_safeSetExposureOffset(next));
-    _resetFocusFadeTimer();
-  }
-
-  void _onFocusDragStart() {
-    _exposureBase = _exposureOffset;
-  }
-
-  void _onScaleStart() {
-    _zoomBase = _zoomLevel;
-  }
-
-  void _onScaleUpdate(ScaleUpdateDetails details) {
-    if (!_cameraReady || details.scale == 1.0) return;
-    unawaited(_safeSetZoomLevel(_zoomBase * details.scale));
-  }
-
-  void _onVerticalSwipeEnd(DragEndDetails details) {
-    if (_focusRingVisible && _focusPoint != null) return;
-  }
-
-  void _setPanelExpanded(bool expanded) {
-    if (_panelExpanded == expanded) return;
-    setState(() => _panelExpanded = expanded);
-    if (expanded) {
-      _stylePanelExpanded = false;
-    }
-    if (expanded) {
-      _panelController.forward();
-    } else {
-      _panelController.reverse();
-    }
-  }
-
-  void _togglePanel() => _setPanelExpanded(!_panelExpanded);
-
-  void _toggleStylePanel() {
-    final opening = !_stylePanelExpanded;
-    setState(() {
-      _stylePanelExpanded = opening;
-      if (opening) {
-        _temperatureBeforeStylePanel = _temperatureValue;
-        _tintBeforeStylePanel = _tintValue;
-        _panelExpanded = false;
-      }
-    });
-    if (_stylePanelExpanded) {
-      _panelController.reverse();
-    }
-  }
-
-  void _closeStylePanelCancel() {
-    setState(() {
-      _temperatureValue = _temperatureBeforeStylePanel ?? _temperatureValue;
-      _tintValue = _tintBeforeStylePanel ?? _tintValue;
-      _stylePanelExpanded = false;
-    });
-  }
-
-  void _resetStylePanel() {
-    setState(() {
-      _temperatureValue = 0.0;
-      _tintValue = 0.0;
-    });
-  }
-
-  Future<void> _openFlashMenu() async {
-    final choice = await _showSelectionMenu<_FlashChoice>(
-      title: '闪光灯',
-      selected: _flashChoice,
-      entries: const [
-        _MenuEntry(
-          value: _FlashChoice.auto,
-          icon: CupertinoIcons.bolt_circle_fill,
-          title: '自动',
-          subtitle: 'Auto',
-        ),
-        _MenuEntry(
-          value: _FlashChoice.on,
-          icon: CupertinoIcons.bolt_fill,
-          title: '常开',
-          subtitle: 'On',
-        ),
-        _MenuEntry(
-          value: _FlashChoice.off,
-          icon: CupertinoIcons.bolt_slash_fill,
-          title: '关闭',
-          subtitle: 'Off',
-        ),
-      ],
-    );
-    if (choice != null) {
-      await _safeSetFlashMode(choice);
-    }
-  }
-
-  Future<void> _openTimerMenu() async {
-    final choice = await _showSelectionMenu<_TimerChoice>(
-      title: '计时器',
-      selected: _timerChoice,
-      entries: const [
-        _MenuEntry(
-          value: _TimerChoice.off,
-          icon: CupertinoIcons.clear_circled,
-          title: '关闭',
-          subtitle: 'Off',
-        ),
-        _MenuEntry(
-          value: _TimerChoice.three,
-          icon: CupertinoIcons.timer,
-          title: '3 秒',
-          subtitle: '3s',
-        ),
-        _MenuEntry(
-          value: _TimerChoice.five,
-          icon: CupertinoIcons.timer,
-          title: '5 秒',
-          subtitle: '5s',
-        ),
-        _MenuEntry(
-          value: _TimerChoice.ten,
-          icon: CupertinoIcons.timer,
-          title: '10 秒',
-          subtitle: '10s',
-        ),
-      ],
-    );
-    if (choice != null && mounted) {
-      setState(() => _timerChoice = choice);
-    }
-  }
-
-  Future<void> _openAspectMenu() async {
-    final choice = await _showSelectionMenu<_AspectChoice>(
-      title: '比例',
-      selected: _aspectChoice,
-      entries: const [
-        _MenuEntry(
-          value: _AspectChoice.fourThree,
-          icon: CupertinoIcons.crop,
-          title: '4:3',
-          subtitle: 'Classic',
-        ),
-        _MenuEntry(
-          value: _AspectChoice.oneOne,
-          icon: CupertinoIcons.square,
-          title: '1:1',
-          subtitle: 'Square',
-        ),
-        _MenuEntry(
-          value: _AspectChoice.sixteenNine,
-          icon: CupertinoIcons.rectangle,
-          title: '16:9',
-          subtitle: 'Wide',
-        ),
-      ],
-    );
-    if (choice != null && mounted) {
-      setState(() => _aspectChoice = choice);
-    }
-  }
-
-  Future<void> _openExposureSheet() async {
-    final controller = _cameraController;
-    if (controller == null || !controller.value.isInitialized) return;
-
-    final result = await showModalBottomSheet<double>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (sheetContext) {
-        double temp = _exposureOffset;
-        return Padding(
-          padding: EdgeInsets.only(
-            left: 16,
-            right: 16,
-            bottom: 16 + MediaQuery.of(sheetContext).viewInsets.bottom,
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(28),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-              child: Container(
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.14),
-                  border: Border.all(color: Colors.white.withOpacity(0.18)),
-                  borderRadius: BorderRadius.circular(28),
-                ),
-                child: StatefulBuilder(
-                  builder: (context, setModalState) {
-                    return Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        const Text(
-                          '曝光补偿',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          'EV ${temp.toStringAsFixed(1)}',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.78),
-                            fontSize: 12,
-                          ),
-                        ),
-                        SliderTheme(
-                          data: SliderTheme.of(context).copyWith(
-                            trackHeight: 3,
-                            thumbShape: const RoundSliderThumbShape(
-                              enabledThumbRadius: 10,
-                            ),
-                            overlayShape: const RoundSliderOverlayShape(
-                              overlayRadius: 18,
-                            ),
-                          ),
-                          child: Slider(
-                            value: temp.clamp(_minExposureOffset, _maxExposureOffset),
-                            min: _minExposureOffset,
-                            max: _maxExposureOffset,
-                            onChanged: (value) {
-                              setModalState(() => temp = value);
-                              unawaited(_safeSetExposureOffset(value));
-                            },
-                          ),
-                        ),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: TextButton(
-                            onPressed: () => Navigator.of(sheetContext).pop(0.0),
-                            child: const Text('重置到 0'),
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-
-    if (result != null && mounted) {
-      await _safeSetExposureOffset(result);
-    }
-  }
-
-  Future<void> _toggleNightMode() async {
-    await _applyNightMode(!_nightMode);
-  }
-
-  Future<void> _applyNightMode(
-    bool enabled, {
-    bool fromInitialization = false,
-  }) async {
-    if (mounted) {
-      setState(() {
-        _nightMode = enabled;
-      });
-    } else {
-      _nightMode = enabled;
-    }
-
-    if (enabled) {
-      _nightModeSavedExposure ??= _exposureOffset;
-      final target = math.min(_maxExposureOffset, math.max(1.2, _maxExposureOffset * 0.75));
-      await _safeSetExposureOffset(target);
-      try {
-        await _safeSetFlashMode(_FlashChoice.off);
-      } catch (_) {
-        // ignore
-      }
-    } else if (!fromInitialization) {
-      final restore = _nightModeSavedExposure ?? 0.0;
-      _nightModeSavedExposure = null;
-      await _safeSetExposureOffset(restore);
-    }
-  }
-
-  Future<void> _handleCapturePressed() async {
-    if (_isBusy || _isCountingDown) return;
-
-    if (_isMockMode) {
-      await _captureMockAndUpload();
-      return;
-    }
-
-    final delay = switch (_timerChoice) {
-      _TimerChoice.off => 0,
-      _TimerChoice.three => 3,
-      _TimerChoice.five => 5,
-      _TimerChoice.ten => 10,
-    };
-
-    if (delay > 0) {
-      await _startCountdown(delay);
-      return;
-    }
-
-    await _capturePipeline();
-  }
-
-  Future<void> _startCountdown(int seconds) async {
-    if (_isBusy || _isCountingDown) return;
-    setState(() {
-      _isCountingDown = true;
-      _countdownRemaining = seconds;
       _errorMessage = null;
     });
 
-    await HapticFeedback.lightImpact();
-    _countdownTimer?.cancel();
-    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
-      if (!mounted) {
-        timer.cancel();
-        return;
-      }
+    final shot = await _imagePicker.pickImage(source: ImageSource.camera);
+    if (shot == null) return;
 
-      final next = (_countdownRemaining ?? seconds) - 1;
-      if (next <= 0) {
-        timer.cancel();
-        setState(() {
-          _countdownRemaining = null;
-          _isCountingDown = false;
-        });
-        await HapticFeedback.mediumImpact();
-        await _capturePipeline();
-        return;
-      }
-
-      setState(() => _countdownRemaining = next);
-      await HapticFeedback.selectionClick();
-    });
+    await _processCapturedImage(File(shot.path));
   }
 
-  Future<void> _captureMockAndUpload() async {
-    if (_isBusy) return;
+  Future<void> _processCapturedImage(File sourceImage) async {
     setState(() {
-      _isBusy = true;
-      _loadingMessage = '正在模拟拍照并同步...';
-      _errorMessage = null;
-      _showCaptureSpinner = true;
-    });
-
-    try {
-      final timestamp = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
-      final mockFile = await _createMockCaptureFile(timestamp);
-      final bytes = await mockFile.readAsBytes();
-      final metadata = <String, dynamic>{
-        'timestamp': timestamp,
-        'latitude': 31.2304,
-        'longitude': 121.4737,
-        'accuracy': 10.0,
-      };
-      final hash = _cryptoService.calculateSha256(
-        imageBytes: bytes,
-        metadata: metadata,
-      );
-
-      setState(() => _loadingMessage = '正在同步至云端...');
-      await _uploadStamp(hash, metadata);
-      await _protectAndSaveCapturedImage(mockFile, hash);
-      await _persistHistory(mockFile, hash, metadata);
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Mock capture synced successfully')),
-      );
-    } on Exception catch (error) {
-      if (!mounted) return;
-      setState(() => _errorMessage = 'Mock capture failed: $error');
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isBusy = false;
-          _showCaptureSpinner = false;
-          _loadingMessage = null;
-        });
-      }
-    }
-  }
-
-  Future<void> _capturePipeline() async {
-    final controller = _cameraController;
-    if (controller == null || !controller.value.isInitialized || _isBusy) return;
-
-    setState(() {
-      _isBusy = true;
-      _loadingMessage = '正在拍照并同步...';
-      _showCaptureSpinner = true;
+      _isProcessing = true;
+      _progressMessage = '正在获取时空元数据...';
       _errorMessage = null;
     });
 
     try {
-      if (_nightMode) {
-        await Future<void>.delayed(const Duration(milliseconds: 900));
-      }
-
-      final shot = await controller.takePicture();
-      final sourceFile = File(shot.path);
-      final cropped = await _cropPhotoToSelectedAspect(sourceFile);
-      final bytes = await cropped.readAsBytes();
       final metadata = await _metadataService.collectMetadata();
       final normalizedMetadata = <String, dynamic>{
         ...metadata,
         'timestamp': metadata['timestamp']?.toString() ??
             DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now()),
       };
+
+      final bytes = await sourceImage.readAsBytes();
       final hash = _cryptoService.calculateSha256(
         imageBytes: bytes,
         metadata: normalizedMetadata,
       );
-
-      setState(() => _loadingMessage = '正在同步至云端...');
-      await _uploadStamp(hash, normalizedMetadata);
-      await _protectAndSaveCapturedImage(cropped, hash);
-      await _persistHistory(cropped, hash, normalizedMetadata);
+      final verifyUrl = _verificationUrlForHash(hash);
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('拍照完成，已保存并同步')),
+      setState(() => _progressMessage = '正在同步至云端...');
+      await _uploadStamp(hash, normalizedMetadata);
+
+      if (!mounted) return;
+      setState(() => _progressMessage = '正在写入防伪信息...');
+      final watermarked = await _watermarkService.embedInvisibleWatermark(
+        sourceImage,
+        verifyUrl,
       );
-    } on CameraException catch (error) {
+      final saved = await _exifService.secureAndSaveImage(
+        watermarked,
+        hash,
+        verifyUrl,
+      );
+      if (!saved) {
+        throw StateError('防伪图片保存失败，请检查相册权限。');
+      }
+
+      if (!mounted) return;
+      setState(() => _progressMessage = '正在生成鉴别结果...');
+      final createdAt = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
+      await widget.historyService.upsertRecord(
+        sourceImage: watermarked,
+        hash: hash,
+        timestamp: normalizedMetadata['timestamp']?.toString() ?? '-',
+        latitude: normalizedMetadata['latitude']?.toString() ?? '-',
+        longitude: normalizedMetadata['longitude']?.toString() ?? '-',
+        accuracy: normalizedMetadata['accuracy']?.toString() ?? '-',
+        createdAt: createdAt,
+        verifyUrl: verifyUrl,
+      );
+
+      final result = _CameraCaptureResult(
+        hash: hash,
+        timestamp: normalizedMetadata['timestamp']?.toString() ?? '-',
+        latitude: normalizedMetadata['latitude']?.toString() ?? '-',
+        longitude: normalizedMetadata['longitude']?.toString() ?? '-',
+        accuracy: normalizedMetadata['accuracy']?.toString() ?? '-',
+        createdAt: createdAt,
+        verifyUrl: verifyUrl,
+      );
+
       if (!mounted) return;
       setState(() {
-        _errorMessage =
-            'Failed to capture photo: ${error.description ?? error.code}';
+        _lastResult = result;
+        _isProcessing = false;
+        _progressMessage = null;
       });
+
+      await _showResultSheet(result);
     } on Exception catch (error) {
       if (!mounted) return;
-      setState(() => _errorMessage = 'Capture failed: $error');
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isBusy = false;
-          _showCaptureSpinner = false;
-          _loadingMessage = null;
-        });
-      }
+      setState(() {
+        _isProcessing = false;
+        _progressMessage = null;
+        _errorMessage = '处理失败：$error';
+      });
     }
-  }
-
-  Future<File> _createMockCaptureFile(String timestamp) async {
-    final image = img.Image(width: 1600, height: 1200);
-    for (final pixel in image) {
-      final x = pixel.x / image.width;
-      final y = pixel.y / image.height;
-      pixel
-        ..r = (32 + 90 * x).round()
-        ..g = (52 + 100 * y).round()
-        ..b = (110 + 55 * (1 - x)).round()
-        ..a = 255;
-    }
-
-    final encoded = img.encodeJpg(image, quality: 94);
-    final dir = await getTemporaryDirectory();
-    final file = File(
-      '${dir.path}/truth_stamp_mock_$timestamp.jpg'
-          .replaceAll(':', '-')
-          .replaceAll(' ', '_'),
-    );
-    await file.writeAsBytes(encoded, flush: true);
-    return file;
-  }
-
-  Future<File> _cropPhotoToSelectedAspect(File sourceFile) async {
-    final bytes = await sourceFile.readAsBytes();
-    final decoded = img.decodeImage(bytes);
-    if (decoded == null) return sourceFile;
-
-    final targetAspect = _captureAspect;
-    final currentAspect = decoded.width / decoded.height;
-    if ((currentAspect - targetAspect).abs() < 0.01) {
-      return sourceFile;
-    }
-
-    int cropWidth = decoded.width;
-    int cropHeight = decoded.height;
-    int cropX = 0;
-    int cropY = 0;
-
-    if (currentAspect > targetAspect) {
-      cropWidth = (decoded.height * targetAspect).round();
-      cropX = ((decoded.width - cropWidth) / 2).round();
-    } else {
-      cropHeight = (decoded.width / targetAspect).round();
-      cropY = _aspectChoice == _AspectChoice.oneOne
-          ? 0
-          : ((decoded.height - cropHeight) / 2).round();
-    }
-
-    cropWidth = cropWidth.clamp(1, decoded.width);
-    cropHeight = cropHeight.clamp(1, decoded.height);
-    cropX = cropX.clamp(0, decoded.width - cropWidth);
-    cropY = cropY.clamp(0, decoded.height - cropHeight);
-
-    final cropped = img.copyCrop(
-      decoded,
-      x: cropX,
-      y: cropY,
-      width: cropWidth,
-      height: cropHeight,
-    );
-
-    final dir = await getTemporaryDirectory();
-    final out = File(
-      '${dir.path}/truth_stamp_${DateTime.now().millisecondsSinceEpoch}.jpg',
-    );
-    await out.writeAsBytes(img.encodeJpg(cropped, quality: 95), flush: true);
-    return out;
   }
 
   Future<void> _uploadStamp(
@@ -947,49 +204,6 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
     }
   }
 
-  Future<void> _protectAndSaveCapturedImage(File sourceFile, String hash) async {
-    final verifyUrl = _verificationUrlForHash(hash);
-    try {
-      final watermarked = await _watermarkService.embedInvisibleWatermark(
-        sourceFile,
-        verifyUrl,
-      );
-      final saved = await _exifService.secureAndSaveImage(
-        watermarked,
-        hash,
-        verifyUrl,
-      );
-      if (!saved) {
-        throw StateError('双重防伪图片保存失败，请检查相册权限。');
-      }
-    } on Exception catch (error) {
-      if (!mounted) return;
-      setState(() => _errorMessage = '保存防伪原图失败：$error');
-    }
-  }
-
-  Future<void> _persistHistory(
-    File sourceFile,
-    String hash,
-    Map<String, dynamic> metadata,
-  ) async {
-    try {
-      await widget.historyService.upsertRecord(
-        sourceImage: sourceFile,
-        hash: hash,
-        timestamp: metadata['timestamp']?.toString() ?? '-',
-        latitude: metadata['latitude']?.toString() ?? '-',
-        longitude: metadata['longitude']?.toString() ?? '-',
-        accuracy: metadata['accuracy']?.toString() ?? '-',
-        createdAt: DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now()),
-        verifyUrl: _verificationUrlForHash(hash),
-      );
-    } on Exception catch (error) {
-      if (!mounted) return;
-      setState(() => _errorMessage = '历史记录写入失败：$error');
-    }
-  }
-
   String _extractError(String body, int statusCode) {
     if (body.trim().isEmpty) return 'HTTP $statusCode';
     try {
@@ -998,866 +212,291 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
         return decoded['error'] as String;
       }
     } on FormatException {
-      // Fallback below.
+      // fallback below
     }
     return body;
   }
 
-  Future<T?> _showSelectionMenu<T>({
-    required String title,
-    required List<_MenuEntry<T>> entries,
-    required T selected,
-  }) {
-    return showGeneralDialog<T>(
+  Future<void> _showResultSheet(_CameraCaptureResult result) async {
+    await showModalBottomSheet<void>(
       context: context,
-      barrierDismissible: true,
-      barrierLabel: title,
-      barrierColor: Colors.black.withOpacity(0.10),
-      transitionDuration: const Duration(milliseconds: 220),
-      pageBuilder: (dialogContext, animation, secondaryAnimation) {
-        return SafeArea(
-          child: Stack(
-            children: [
-              Positioned(
-                left: 16,
-                right: 16,
-                top: 16,
-                child: Material(
-                  color: Colors.transparent,
-                  child: _GlassSelectionCard<T>(
-                    title: title,
-                    entries: entries,
-                    selected: selected,
-                    onSelected: (value) => Navigator.of(dialogContext).pop(value),
-                  ),
-                ),
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.72,
+          minChildSize: 0.56,
+          maxChildSize: 0.92,
+          expand: false,
+          builder: (_, controller) {
+            return Container(
+              decoration: const BoxDecoration(
+                color: Color(0xFFF7F8FB),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
               ),
-            ],
-          ),
-        );
-      },
-      transitionBuilder: (context, animation, secondaryAnimation, child) {
-        final curved = CurvedAnimation(
-          parent: animation,
-          curve: Curves.easeOutCubic,
-          reverseCurve: Curves.easeInCubic,
-        );
-        return FadeTransition(
-          opacity: curved,
-          child: ScaleTransition(
-            scale: Tween<double>(begin: 0.96, end: 1).animate(curved),
-            child: child,
-          ),
+              padding: const EdgeInsets.fromLTRB(18, 12, 18, 20),
+              child: ListView(
+                controller: controller,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 42,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFCBD5E1),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  const Text(
+                    '防伪凭证已生成',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF0F172A),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(24),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x14000000),
+                          blurRadius: 24,
+                          offset: Offset(0, 12),
+                        ),
+                      ],
+                    ),
+                    child: Center(
+                      child: QrImageView(
+                        data: result.verifyUrl,
+                        version: QrVersions.auto,
+                        size: 180,
+                        backgroundColor: Colors.white,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  _ResultRow(label: '哈希指纹', value: result.hash),
+                  _ResultRow(label: '时间', value: result.timestamp),
+                  _ResultRow(
+                    label: 'GPS',
+                    value: '${result.latitude}, ${result.longitude}',
+                  ),
+                  _ResultRow(label: '定位精度', value: '${result.accuracy} m'),
+                  const SizedBox(height: 12),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(18),
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF3B82F6), Color(0xFF2563EB)],
+                      ),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x332563EB),
+                          blurRadius: 18,
+                          offset: Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: FilledButton(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.transparent,
+                        shadowColor: Colors.transparent,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                      ),
+                      onPressed: () {
+                        Navigator.of(sheetContext).pop();
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => VerificationDetailScreen(
+                              hash: result.hash,
+                              timestamp: result.timestamp,
+                              latitude: result.latitude,
+                              longitude: result.longitude,
+                              accuracy: result.accuracy,
+                              createdAt: result.createdAt,
+                              verifyUrl: result.verifyUrl,
+                            ),
+                          ),
+                        );
+                      },
+                      child: const Text(
+                        '查看鉴别详情',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
         );
       },
     );
   }
 
-  Future<void> _onArrowTapped() async {
-    _togglePanel();
-    await HapticFeedback.selectionClick();
-  }
-
-  Future<void> _onPanelExposureTapped() async {
-    await _openExposureSheet();
-  }
-
-  Future<void> _onNightTap() async {
-    await _toggleNightMode();
-    await HapticFeedback.lightImpact();
-  }
-
-  Widget _buildStage() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final stageWidth = constraints.maxWidth;
-        final stageHeight = constraints.maxHeight;
-        final fullPreview = _aspectChoice == _AspectChoice.sixteenNine;
-        final previewWidth = stageWidth;
-        final previewHeight = fullPreview
-            ? stageHeight
-            : math.min(stageHeight, previewWidth * (4 / 3));
-        final previewTop = fullPreview ? 0.0 : (stageHeight - previewHeight) / 2;
-        final previewRect = Rect.fromLTWH(
-          (stageWidth - previewWidth) / 2,
-          previewTop,
-          previewWidth,
-          previewHeight,
-        );
-        final captureHeight = switch (_aspectChoice) {
-          _AspectChoice.fourThree => previewHeight,
-          _AspectChoice.oneOne => math.min(previewWidth, previewHeight),
-          _AspectChoice.sixteenNine => previewHeight,
-        };
-        final controller = _cameraController;
-        final previewAspect = controller?.value.aspectRatio ?? (4 / 3);
-        const controlsHeight = 132.0;
-
-        final topControls = Positioned(
-          top: fullPreview ? 8 : 10,
-          left: 12,
-          right: 12,
-          child: SizedBox(
-            height: 36,
-            child: Stack(
-              children: [
-                Align(
-                  alignment: Alignment.topCenter,
-                  child: _buildArrow(),
-                ),
-                Align(
-                  alignment: Alignment.topRight,
-                  child: _TopIconButton(
-                    icon: CupertinoIcons.layers_alt,
-                    onTap: _toggleStylePanel,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-
-        final focusConstraints = BoxConstraints.tightFor(
-          width: stageWidth,
-          height: stageHeight,
-        );
-        final double loadingBottom =
-            fullPreview ? controlsHeight + 24 : 24;
-        final bottomMaskHeight = _aspectChoice == _AspectChoice.oneOne
-            ? math.max(0.0, previewRect.width / 3)
-            : 0.0;
-
-        return Stack(
-          fit: StackFit.expand,
+  @override
+  Widget build(BuildContext context) {
+    final hasCamera = widget.cameras.isNotEmpty;
+    return Scaffold(
+      backgroundColor: const Color(0xFFF4F6FA),
+      body: SafeArea(
+        child: Stack(
           children: [
-            const ColoredBox(color: Colors.black),
-            // Bottom layer: physically stable camera view (3:4) or full 16:9.
-            Positioned.fromRect(
-              rect: previewRect,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTapDown: (details) {
-                  if (_isBusy || _isCountingDown) return;
-                  final dx = details.localPosition.dx;
-                  final dy = details.localPosition.dy;
-                  if (dx < 0 ||
-                      dx > previewRect.width ||
-                      dy < 0 ||
-                      dy > captureHeight) {
-                    return;
-                  }
-                  _presentFocusRing(
-                    Offset(previewRect.left + dx, previewRect.top + dy),
-                  );
-                  _exposureBase = _exposureOffset;
-                  final normalized = Offset(
-                    (dx / previewRect.width).clamp(0.0, 1.0),
-                    (dy / captureHeight).clamp(0.0, 1.0),
-                  );
-                  unawaited(_safeSetFocusAndExposurePoint(normalized));
-                },
-                onScaleStart: (_) => _onScaleStart(),
-                onScaleUpdate: _onScaleUpdate,
-                onVerticalDragStart: (_) => _onFocusDragStart(),
-                onVerticalDragUpdate: _applyFocusDrag,
-                onVerticalDragEnd: _onVerticalSwipeEnd,
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    Positioned.fill(
-                      child: Center(
-                        child: fullPreview
-                            ? _buildPreviewContent(previewAspect)
-                            : AspectRatio(
-                                aspectRatio: 3 / 4,
-                                child: _buildPreviewContent(previewAspect),
-                              ),
-                      ),
-                    ),
-                    if (bottomMaskHeight > 0)
-                      Positioned(
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        height: bottomMaskHeight,
-                        child: const ColoredBox(color: Colors.black),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-            Positioned(
-              top: previewRect.top,
-              left: previewRect.left,
-              right: stageWidth - previewRect.right,
-              height: captureHeight,
-              child: _buildCenterLevel(),
-            ),
-            if (fullPreview)
-              const Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: _FrostedStrip(height: 58),
-              ),
-            topControls,
-            if (_panelExpanded)
-              Positioned(
-                top: 58,
-                left: 16,
-                right: 16,
-                child: _buildPanel(),
-              ),
-            if (_stylePanelExpanded)
-              Positioned(
-                left: 14,
-                right: 14,
-                bottom: controlsHeight + 10,
-                child: _buildStylePanel(),
-              ),
-            if (_focusRingVisible && _focusPoint != null)
-              _buildFocusOverlay(focusConstraints),
-            if (_countdownRemaining != null) _buildCountdownOverlay(),
-            if (_showCaptureSpinner) _buildCaptureSpinner(),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: _buildControlArea(fullPreview: fullPreview),
-            ),
-            if (_errorMessage != null)
-              Positioned(
-                left: 14,
-                right: 14,
-                top: 56,
-                child: _InlineNotice(message: _errorMessage!),
-              ),
-            if (_loadingMessage != null)
-              Positioned(
-                left: 14,
-                right: 14,
-                bottom: loadingBottom,
-                child: _InlineNotice(message: _loadingMessage!),
-              ),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _buildPreviewContent(double previewAspect) {
-    final controller = _cameraController;
-    if (_isMockMode || controller == null || !controller.value.isInitialized) {
-      return _buildMockSurface();
-    }
-
-    return Center(
-      child: FittedBox(
-        fit: BoxFit.cover,
-        child: SizedBox(
-          width: 1000,
-          height: 1000 / previewAspect,
-          child: CameraPreview(controller),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMockSurface() {
-    return const DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: <Color>[
-            Color(0xFF08111F),
-            Color(0xFF172554),
-            Color(0xFF0B1020),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildArrow() {
-    return GestureDetector(
-      onTap: _onArrowTapped,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(999),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 220),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: Colors.white.withOpacity(0.16)),
-            ),
-            child: AnimatedRotation(
-              turns: _panelExpanded ? 0.5 : 0.0,
-              duration: const Duration(milliseconds: 220),
-              child: const Icon(
-                CupertinoIcons.chevron_down,
-                color: Colors.white,
-                size: 18,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPanel() {
-    const labelsVisible = true;
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(34),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.14),
-            borderRadius: BorderRadius.circular(34),
-            border: Border.all(color: Colors.white.withOpacity(0.16)),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x30000000),
-                blurRadius: 30,
-                offset: Offset(0, 12),
-              ),
-            ],
-          ),
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            physics: const BouncingScrollPhysics(),
-            child: Row(
-              children: [
-                _ChubbyControl(
-                  icon: CupertinoIcons.bolt_fill,
-                  title: '闪光灯',
-                  active: _flashChoice != _FlashChoice.off,
-                  expanded: labelsVisible,
-                  onTap: _openFlashMenu,
-                ),
-                const _ChubbyControl(
-                  icon: CupertinoIcons.circle_grid_3x3_fill,
-                  title: '实况',
-                  active: false,
-                  disabled: true,
-                  expanded: labelsVisible,
-                  onTap: null,
-                ),
-                _ChubbyControl(
-                  icon: CupertinoIcons.timer,
-                  title: '计时器',
-                  active: _timerChoice != _TimerChoice.off,
-                  expanded: labelsVisible,
-                  onTap: _openTimerMenu,
-                ),
-                _ChubbyControl(
-                  icon: CupertinoIcons.sun_max_fill,
-                  title: '曝光',
-                  active: _exposureOffset.abs() > 0.05,
-                  expanded: labelsVisible,
-                  subtitle: 'EV ${_exposureOffset.toStringAsFixed(1)}',
-                  onTap: _onPanelExposureTapped,
-                ),
-                _ChubbyControl(
-                  icon: CupertinoIcons.crop,
-                  title: '宽高比',
-                  active: true,
-                  expanded: labelsVisible,
-                  subtitle: _aspectChoice.label,
-                  onTap: _openAspectMenu,
-                ),
-                _ChubbyControl(
-                  icon: CupertinoIcons.moon_stars_fill,
-                  title: '夜间',
-                  active: _nightMode,
-                  expanded: labelsVisible,
-                  onTap: _onNightTap,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCenterLevel() {
-    return AnimatedBuilder(
-      animation: _levelController,
-      builder: (context, _) {
-        final t = _levelController.value * math.pi * 2;
-        const amp = 6.0;
-        final offset = Offset(math.sin(t) * amp, math.cos(t * 1.2) * amp);
-        final aligned = offset.distance < 0.9;
-        if (aligned) {
-          final now = DateTime.now();
-          if (_lastLevelHaptic == null ||
-              now.difference(_lastLevelHaptic!) > const Duration(seconds: 1)) {
-            _lastLevelHaptic = now;
-            unawaited(HapticFeedback.lightImpact());
-          }
-        }
-
-        return IgnorePointer(
-          child: Center(
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                _CrossHair(
-                  color: Colors.white.withOpacity(0.36),
-                  size: 24,
-                  strokeWidth: 1.1,
-                ),
-                Transform.translate(
-                  offset: offset,
-                  child: _CrossHair(
-                    color: aligned ? const Color(0xFFFFD84D) : Colors.white.withOpacity(0.92),
-                    size: 18,
-                    strokeWidth: 1.5,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-   Widget _buildFocusOverlay(BoxConstraints constraints) {
-    final point = _focusPoint!;
-    const ringSize = 80.0;
-    const sliderWidth = 3.2;  // 极细的曝光条
-    const sliderHeight = 140.0;
-
-    final left = (point.dx - ringSize / 2).clamp(10.0, constraints.maxWidth - ringSize - sliderWidth - 24);
-    final top = (point.dy - ringSize / 2).clamp(10.0, constraints.maxHeight - sliderHeight - 20.0);
-
-    final sliderValue = (_exposureOffset - _minExposureOffset) /
-        math.max(0.01, _maxExposureOffset - _minExposureOffset);
-
-    return Positioned(
-      left: left,
-      top: top,
-      child: AnimatedOpacity(
-        opacity: _focusOpacity,
-        duration: const Duration(milliseconds: 220),
-        child: AnimatedScale(
-          scale: _focusOpacity > 0.0 ? 1.0 : 0.94,
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOutBack,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              // 黄色焦点方框（iOS风格）
-              Container(
-                width: ringSize,
-                height: ringSize,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: const Color(0xFFFFD84D), width: 1.8),
-                  color: const Color(0x0CFFED4B),
-                ),
-                child: const Center(
-                  child: _CrossHair(
-                    color: Color(0xFFFFD84D),
-                    size: 18,
-                    strokeWidth: 1.2,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 14),
-              // 极细的竖向曝光条（苹果风格）
-              Container(
-                width: sliderWidth,
-                height: sliderHeight,
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.18),
-                  borderRadius: BorderRadius.circular(2),
-                ),
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 22),
                 child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    // 太阳图标（顶部）
-                    Padding(
-                      padding: const EdgeInsets.only(top: 6),
-                      child: Icon(
-                        CupertinoIcons.sun_max_fill,
-                        color: Colors.white.withOpacity(0.72),
-                        size: 12,
+                    GestureDetector(
+                      onTap: hasCamera ? _openSystemCamera : null,
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.fromLTRB(22, 28, 22, 28),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE9EDF3),
+                          borderRadius: BorderRadius.circular(30),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Color(0x22000000),
+                              blurRadius: 24,
+                              offset: Offset(0, 12),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          children: [
+                            Container(
+                              width: 62,
+                              height: 62,
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.85),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: const Icon(
+                                CupertinoIcons.camera_fill,
+                                size: 30,
+                                color: Color(0xFF475569),
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                            const Text(
+                              '点击开启系统相机，固化时空真迹',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF334155),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                    // 曝光条
-                    Expanded(
-                      child: Align(
-                        alignment: Alignment(0, 1 - (sliderValue * 2)),
-                        child: Container(
-                          width: sliderWidth + 2,
-                          height: 6,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.rectangle,
-                            color: const Color(0xFFFFD84D),
-                            borderRadius: BorderRadius.circular(1),
+                    const SizedBox(height: 20),
+                    SizedBox(
+                      width: double.infinity,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(20),
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF3B82F6), Color(0xFF2563EB)],
+                          ),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Color(0x332563EB),
+                              blurRadius: 22,
+                              offset: Offset(0, 10),
+                            ),
+                          ],
+                        ),
+                        child: FilledButton(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: Colors.transparent,
+                            shadowColor: Colors.transparent,
+                            padding: const EdgeInsets.symmetric(vertical: 17),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                          ),
+                          onPressed: hasCamera ? _openSystemCamera : null,
+                          child: const Text(
+                            '开启原厂相机',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                    // 填充底部空间
-                    const SizedBox(height: 6),
+                    if (_errorMessage != null) ...[
+                      const SizedBox(height: 14),
+                      Text(
+                        _errorMessage!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Color(0xFFB91C1C),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                    if (_lastResult != null) ...[
+                      const SizedBox(height: 10),
+                      TextButton(
+                        onPressed: () => _showResultSheet(_lastResult!),
+                        child: const Text('查看最近一次防伪结果'),
+                      ),
+                    ],
                   ],
                 ),
               ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCountdownOverlay() {
-    return Positioned.fill(
-      child: IgnorePointer(
-        child: Center(
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(40),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-              child: Container(
-                width: 176,
-                height: 176,
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(40),
-                  border: Border.all(color: Colors.white.withOpacity(0.18)),
-                ),
-                child: Center(
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 160),
-                    transitionBuilder: (child, animation) {
-                      return FadeTransition(
-                        opacity: animation,
-                        child: ScaleTransition(scale: animation, child: child),
-                      );
-                    },
-                    child: Text(
-                      '${_countdownRemaining!}',
-                      key: ValueKey<int>(_countdownRemaining!),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 88,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: -4,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
             ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCaptureSpinner() {
-    return Positioned.fill(
-      child: IgnorePointer(
-        child: Center(
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(40),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-              child: Container(
-                width: 92,
-                height: 92,
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.20),
-                  borderRadius: BorderRadius.circular(40),
-                  border: Border.all(color: Colors.white.withOpacity(0.15)),
-                ),
-                child: const Center(
-                  child: SizedBox(
-                    width: 28,
-                    height: 28,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.4,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStylePanel() {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(24),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.14),
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: Colors.white.withOpacity(0.16)),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _StyleSliderRow(
-                title: '色温',
-                value: _temperatureValue,
-                onChanged: (next) => setState(() => _temperatureValue = next),
-              ),
-              const SizedBox(height: 8),
-              _StyleSliderRow(
-                title: '色调',
-                value: _tintValue,
-                onChanged: (next) => setState(() => _tintValue = next),
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  _TopIconButton(
-                    icon: CupertinoIcons.xmark,
-                    onTap: _closeStylePanelCancel,
-                  ),
-                  const Spacer(),
-                  _TopIconButton(
-                    icon: CupertinoIcons.refresh,
-                    onTap: _resetStylePanel,
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBottomBar() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
-      child: Row(
-        children: [
-          _RoundActionButton(
-            icon: CupertinoIcons.camera_rotate_fill,
-            label: widget.cameras.length > 1 ? '切换' : '单摄',
-            onTap: widget.cameras.length > 1 && !_isBusy && !_isCountingDown
-                ? _switchCamera
-                : null,
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Center(
-              child: GestureDetector(
-                onTap: _isBusy || _isCountingDown ? null : _handleCapturePressed,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
-                  width: 74,
-                  height: 74,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Colors.transparent,
-                    border: Border.all(
-                      color: Colors.white.withOpacity(_isBusy ? 0.55 : 0.88),
-                      width: 3.2,
-                    ),
-                  ),
+            if (_isProcessing)
+              Positioned.fill(
+                child: ColoredBox(
+                  color: Colors.black.withOpacity(0.25),
                   child: Center(
                     child: Container(
-                      width: 62,
-                      height: 62,
+                      margin: const EdgeInsets.symmetric(horizontal: 28),
+                      padding: const EdgeInsets.all(20),
                       decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Colors.white.withOpacity(_isBusy ? 0.55 : 1),
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(22),
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const SizedBox(
+                            width: 26,
+                            height: 26,
+                            child: CircularProgressIndicator(strokeWidth: 2.8),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            _progressMessage ?? '处理中...',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF334155),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
                 ),
               ),
-            ),
-          ),
-          const SizedBox(width: 82),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildControlArea({required bool fullPreview}) {
-    final content = _buildBottomBar();
-    if (!fullPreview) {
-      return content;
-    }
-
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(24),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-        child: Container(
-          margin: const EdgeInsets.fromLTRB(12, 0, 12, 10),
-          decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.20),
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: Colors.white.withOpacity(0.14)),
-          ),
-          child: content,
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: SafeArea(
-        child: _buildStage(),
-      ),
-    );
-  }
-}
-
-class _MenuEntry<T> {
-  const _MenuEntry({
-    required this.value,
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-  });
-
-  final T value;
-  final IconData icon;
-  final String title;
-  final String subtitle;
-}
-
-class _GlassSelectionCard<T> extends StatelessWidget {
-  const _GlassSelectionCard({
-    required this.title,
-    required this.entries,
-    required this.selected,
-    required this.onSelected,
-  });
-
-  final String title;
-  final List<_MenuEntry<T>> entries;
-  final T selected;
-  final ValueChanged<T> onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(28),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
-        child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.14),
-            borderRadius: BorderRadius.circular(28),
-            border: Border.all(color: Colors.white.withOpacity(0.16)),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 10),
-              for (final entry in entries) ...[
-                _GlassSelectionTile<T>(
-                  entry: entry,
-                  selected: entry.value == selected,
-                  onTap: () => onSelected(entry.value),
-                ),
-                if (entry != entries.last) const SizedBox(height: 6),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _GlassSelectionTile<T> extends StatelessWidget {
-  const _GlassSelectionTile({
-    required this.entry,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final _MenuEntry<T> entry;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        decoration: BoxDecoration(
-          color: selected ? Colors.white.withOpacity(0.18) : Colors.white.withOpacity(0.06),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(
-            color: selected ? Colors.white.withOpacity(0.28) : Colors.white.withOpacity(0.08),
-          ),
-        ),
-        child: Row(
-          children: [
-            Icon(entry.icon, color: Colors.white, size: 20),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    entry.title,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    entry.subtitle,
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.66),
-                      fontSize: 11,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (selected)
-              const Icon(
-                CupertinoIcons.check_mark_circled_solid,
-                color: Color(0xFFFFD84D),
-                size: 20,
-              ),
           ],
         ),
       ),
@@ -1865,354 +504,45 @@ class _GlassSelectionTile<T> extends StatelessWidget {
   }
 }
 
-class _ChubbyControl extends StatelessWidget {
-  const _ChubbyControl({
-    required this.icon,
-    required this.title,
-    required this.expanded,
-    required this.onTap,
-    this.subtitle,
-    this.active = false,
-    this.disabled = false,
-  });
-
-  final IconData icon;
-  final String title;
-  final String? subtitle;
-  final bool expanded;
-  final bool active;
-  final bool disabled;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final enabled = !disabled && onTap != null;
-    return Padding(
-      padding: const EdgeInsets.only(right: 10),
-      child: InkWell(
-        onTap: enabled ? onTap : null,
-        borderRadius: BorderRadius.circular(999),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOut,
-          width: expanded ? 82 : 58,
-          padding: EdgeInsets.symmetric(horizontal: expanded ? 10 : 6, vertical: 10),
-          decoration: BoxDecoration(
-            color: disabled
-                ? Colors.white.withOpacity(0.06)
-                : active
-                    ? Colors.white.withOpacity(0.16)
-                    : Colors.white.withOpacity(0.08),
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(
-              color: disabled
-                  ? Colors.white.withOpacity(0.05)
-                  : Colors.white.withOpacity(active ? 0.20 : 0.10),
-            ),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                icon,
-                size: 21,
-                color: disabled
-                    ? Colors.white.withOpacity(0.35)
-                    : active
-                        ? const Color(0xFFFFD84D)
-                        : Colors.white,
-              ),
-              AnimatedSize(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeOut,
-                child: expanded
-                    ? Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              title,
-                              style: TextStyle(
-                                color: disabled
-                                    ? Colors.white.withOpacity(0.45)
-                                    : Colors.white,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            if (subtitle != null)
-                              Text(
-                                subtitle!,
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.60),
-                                  fontSize: 9,
-                                ),
-                              ),
-                          ],
-                        ),
-                      )
-                    : const SizedBox.shrink(),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _TopIconButton extends StatelessWidget {
-  const _TopIconButton({
-    required this.icon,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(999),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-          child: Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: Colors.white.withOpacity(0.14)),
-            ),
-            child: Icon(icon, color: Colors.white, size: 18),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _StyleSliderRow extends StatelessWidget {
-  const _StyleSliderRow({
-    required this.title,
-    required this.value,
-    required this.onChanged,
-  });
-
-  final String title;
-  final double value;
-  final ValueChanged<double> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final clamped = value.clamp(-1.0, 1.0);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Text(
-              title,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const Spacer(),
-            Text(
-              clamped.toStringAsFixed(2),
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.76),
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-        SliderTheme(
-          data: SliderTheme.of(context).copyWith(
-            activeTrackColor: Colors.white.withOpacity(0.92),
-            inactiveTrackColor: Colors.white.withOpacity(0.25),
-            trackHeight: 3,
-            thumbColor: const Color(0xFFFFD84D),
-            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 9),
-            overlayShape: const RoundSliderOverlayShape(overlayRadius: 18),
-          ),
-          child: Slider(
-            value: clamped,
-            min: -1.0,
-            max: 1.0,
-            divisions: 40,
-            onChanged: onChanged,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _FrostedStrip extends StatelessWidget {
-  const _FrostedStrip({required this.height});
-
-  final double height;
-
-  @override
-  Widget build(BuildContext context) {
-    return IgnorePointer(
-      child: ClipRRect(
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-          child: Container(
-            height: height,
-            color: Colors.black.withOpacity(0.24),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _RoundActionButton extends StatelessWidget {
-  const _RoundActionButton({
-    required this.icon,
+class _ResultRow extends StatelessWidget {
+  const _ResultRow({
     required this.label,
-    required this.onTap,
+    required this.value,
   });
 
-  final IconData icon;
   final String label;
-  final VoidCallback? onTap;
+  final String value;
 
   @override
   Widget build(BuildContext context) {
-    final active = onTap != null;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(18),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(active ? 0.10 : 0.05),
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: Colors.white.withOpacity(0.12)),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(icon, size: 18, color: Colors.white),
-                const SizedBox(width: 6),
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(active ? 0.92 : 0.50),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
       ),
-    );
-  }
-}
-
-class _CrossHair extends StatelessWidget {
-  const _CrossHair({
-    required this.color,
-    required this.size,
-    required this.strokeWidth,
-  });
-
-  final Color color;
-  final double size;
-  final double strokeWidth;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: size,
-      height: size,
-      child: CustomPaint(
-        painter: _CrossHairPainter(color: color, strokeWidth: strokeWidth),
-      ),
-    );
-  }
-}
-
-class _CrossHairPainter extends CustomPainter {
-  _CrossHairPainter({
-    required this.color,
-    required this.strokeWidth,
-  });
-
-  final Color color;
-  final double strokeWidth;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = strokeWidth
-      ..strokeCap = StrokeCap.round;
-
-    canvas.drawLine(
-      Offset(size.width / 2, 0),
-      Offset(size.width / 2, size.height),
-      paint,
-    );
-    canvas.drawLine(
-      Offset(0, size.height / 2),
-      Offset(size.width, size.height / 2),
-      paint,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _CrossHairPainter oldDelegate) {
-    return oldDelegate.color != color || oldDelegate.strokeWidth != strokeWidth;
-  }
-}
-
-class _InlineNotice extends StatelessWidget {
-  const _InlineNotice({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(18),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.28),
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: Colors.white.withOpacity(0.10)),
-          ),
-          child: Text(
-            message,
-            textAlign: TextAlign.center,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
             style: const TextStyle(
-              color: Colors.white,
               fontSize: 12,
-              fontWeight: FontWeight.w600,
-              height: 1.25,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF64748B),
             ),
           ),
-        ),
+          const SizedBox(height: 4),
+          SelectableText(
+            value,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF0F172A),
+            ),
+          ),
+        ],
       ),
     );
   }
