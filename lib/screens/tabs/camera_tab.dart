@@ -1080,7 +1080,9 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
                 right: 0,
                 top: 0,
                 height: maskHeight,
-                child: const ColoredBox(color: Colors.black),
+                child: Container(
+                  color: Colors.black.withOpacity(0.35),
+                ),
               ),
               AnimatedPositioned(
                 duration: const Duration(milliseconds: 260),
@@ -1089,7 +1091,9 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
                 right: 0,
                 bottom: 0,
                 height: maskHeight,
-                child: const ColoredBox(color: Colors.black),
+                child: Container(
+                  color: Colors.black.withOpacity(0.35),
+                ),
               ),
               if (_gridVisible) Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: _GridPainter()))),
               Positioned.fill(child: _buildCenterLevel()),
@@ -1487,6 +1491,76 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
     );
   }
 
+  Widget _buildZoomControls() {
+   const zoomLevels = [0.5, 1.0, 2.0];
+   return Container(
+     height: 56,
+     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+     child: Row(
+       mainAxisAlignment: MainAxisAlignment.center,
+       children: [
+         for (final zoom in zoomLevels) ...[
+           GestureDetector(
+             onTap: _isBusy || _isCountingDown
+                 ? null
+                 : () => _setZoomLevel(zoom),
+             child: AnimatedContainer(
+               duration: const Duration(milliseconds: 200),
+               width: 48,
+               height: 40,
+               margin: const EdgeInsets.symmetric(horizontal: 6),
+               decoration: BoxDecoration(
+                 color: (_zoomLevel - zoom).abs() < 0.1
+                     ? Colors.white.withOpacity(0.25)
+                     : Colors.white.withOpacity(0.12),
+                 border: Border.all(
+                   color: Colors.white.withOpacity(0.28),
+                   width: 1.2,
+                 ),
+                 borderRadius: BorderRadius.circular(10),
+               ),
+               child: Center(
+                 child: Text(
+                   zoom == 1.0
+                       ? '1x'
+                       : zoom == 0.5
+                           ? '0.5x'
+                           : '2x',
+                   style: TextStyle(
+                     color: Colors.white.withOpacity(0.88),
+                     fontSize: 13,
+                     fontWeight: FontWeight.w600,
+                   ),
+                 ),
+               ),
+             ),
+           ),
+           if (zoom != zoomLevels.last) const SizedBox(width: 2),
+         ],
+       ],
+     ),
+   );
+  }
+
+  Future<void> _setZoomLevel(double level) async {
+   try {
+     final controller = _cameraController;
+     if (controller == null || !controller.value.isInitialized) return;
+      
+     final minZoom = _minZoomLevel;
+     final maxZoom = _maxZoomLevel;
+     final targetZoom = (level * minZoom).clamp(minZoom, maxZoom);
+      
+     await controller.setZoomLevel(targetZoom);
+     setState(() {
+       _zoomLevel = level;
+     });
+     HapticFeedback.selectionClick();
+   } catch (e) {
+     debugPrint('Zoom error: $e');
+   }
+  }
+
   Widget _buildBottomBar() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
@@ -1506,8 +1580,8 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
                 onTap: _isBusy || _isCountingDown ? null : _handleCapturePressed,
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 180),
-                  width: 94,
-                  height: 94,
+                  width: 80,
+                  height: 80,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: Colors.white.withOpacity(_isBusy ? 0.18 : 0.08),
@@ -1518,8 +1592,8 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
                   ),
                   child: Center(
                     child: Container(
-                      width: 68,
-                      height: 68,
+                      width: 56,
+                      height: 56,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: Colors.white.withOpacity(_isBusy ? 0.55 : 1),
@@ -1549,6 +1623,7 @@ class _CameraTabState extends State<CameraTab> with TickerProviderStateMixin {
         child: Column(
           children: [
             Expanded(child: _buildStage()),
+            _buildZoomControls(),
             _buildBottomBar(),
           ],
         ),
