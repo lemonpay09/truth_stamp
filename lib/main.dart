@@ -1,7 +1,7 @@
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
-import 'screens/home_screen.dart';
+import 'screens/main_navigation_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -30,10 +30,14 @@ class TruthStampApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'Truth Stamp',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2E7DFF)),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF0A8F3E),
+          surface: const Color(0xFFF7F8FA),
+        ),
+        scaffoldBackgroundColor: const Color(0xFFF7F8FA),
         useMaterial3: true,
       ),
-      home: HomeScreen(cameras: cameras),
+      home: MainNavigationScreen(cameras: cameras),
     );
   }
 }
