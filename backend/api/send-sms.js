@@ -38,6 +38,8 @@ function normalizePhone(input) {
 
 /**
  * Generate a random 6-digit verification code
+ * DEPRECATED: Aliyun handles verification code generation internally
+ * Kept for reference only - DO NOT USE
  */
 function generateVerificationCode() {
   return Math.floor(100000 + Math.random() * 900000).toString();
@@ -114,15 +116,15 @@ module.exports = async function sendSmsHandler(req, res) {
       throw new Error('Missing ALIBABA_CLOUD_SMS_TEMPLATE_CODE environment variable.');
     }
 
-    // Generate a 6-digit verification code
-    const verificationCode = generateVerificationCode();
-
-    // Create TemplateParam as JSON string with verification code and validity period (in minutes)
-    // The "min" field specifies the validity period (5 minutes) and must be a string
+    // Aliyun will automatically generate and manage the verification code
+    // We use the ##code## keyword to instruct Aliyun to generate and track the code
+    // This ensures verification can be properly validated against Aliyun's records
     const templateParam = JSON.stringify({
-      code: verificationCode,
-      min: "5",  // Validity period: 5 minutes (must be string format for Aliyun API)
+      code: "##code##",  // CRITICAL: Aliyun-managed code placeholder - must be ##code##
+      min: "5",         // Validity period: 5 minutes (string format required)
     });
+
+    console.log('[SendSmsVerifyCode] Using Aliyun-managed verification code (##code##)');
 
     const requestPayload = {
       phoneNumber,
@@ -161,8 +163,6 @@ module.exports = async function sendSmsHandler(req, res) {
       ok: true,
       message: '验证码发送成功',
       requestId: bodyData?.requestId || null,
-      // For development/testing: include the code (remove in production)
-      ...(process.env.NODE_ENV === 'development' && { code: verificationCode }),
     });
   } catch (error) {
     sendJson(res, 500, { error: error.message });
