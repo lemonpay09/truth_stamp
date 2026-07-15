@@ -36,6 +36,13 @@ function normalizePhone(input) {
   return input.replace(/\s+/g, '').replace(/[^\d+]/g, '');
 }
 
+/**
+ * Generate a random 6-digit verification code
+ */
+function generateVerificationCode() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
 function createDypnsClient() {
   const accessKeyId = process.env.ALIBABA_CLOUD_ACCESS_KEY_ID;
   const accessKeySecret = process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET;
@@ -100,10 +107,26 @@ module.exports = async function sendSmsHandler(req, res) {
     const templateCode = process.env.ALIBABA_CLOUD_SMS_TEMPLATE_CODE;
     const verifyChannel = process.env.ALIBABA_CLOUD_VERIFY_CHANNEL || 'SMS';
 
+    if (!signName) {
+      throw new Error('Missing ALIBABA_CLOUD_SMS_SIGN_NAME environment variable.');
+    }
+    if (!templateCode) {
+      throw new Error('Missing ALIBABA_CLOUD_SMS_TEMPLATE_CODE environment variable.');
+    }
+
+    // Generate a 6-digit verification code
+    const verificationCode = generateVerificationCode();
+
+    // Create TemplateParam as JSON string with the verification code
+    const templateParam = JSON.stringify({
+      code: verificationCode,
+    });
+
     const requestPayload = {
       phoneNumber,
       signName,
       templateCode,
+      templateParam,
       verifyChannel,
       ...(process.env.ALIBABA_CLOUD_SMS_EXPIRY
         ? { validTime: Number(process.env.ALIBABA_CLOUD_SMS_EXPIRY) }
@@ -136,6 +159,8 @@ module.exports = async function sendSmsHandler(req, res) {
       ok: true,
       message: '验证码发送成功',
       requestId: bodyData?.requestId || null,
+      // For development/testing: include the code (remove in production)
+      ...(process.env.NODE_ENV === 'development' && { code: verificationCode }),
     });
   } catch (error) {
     sendJson(res, 500, { error: error.message });
