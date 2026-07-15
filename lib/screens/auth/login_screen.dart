@@ -41,8 +41,9 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   bool get _canSubmitPhoneLogin {
+    final codeLength = _codeController.text.trim().length;
     return _phoneController.text.trim().length == 11 &&
-        _codeController.text.trim().length == 6 &&
+        (codeLength == 4 || codeLength == 6) &&
         !_isBusy;
   }
 
@@ -109,8 +110,10 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _loginWithPhoneCode() async {
     final phone = _phoneController.text.trim();
     final code = _codeController.text.trim();
-    if (phone.length != 11 || code.length != 6) {
-      _showMessage('请输入手机号和 6 位验证码');
+    final codeLength = code.length;
+    
+    if (phone.length != 11 || (codeLength != 4 && codeLength != 6)) {
+      _showMessage('请输入手机号和 4 位或 6 位验证码');
       return;
     }
 
@@ -251,7 +254,7 @@ class _LoginScreenState extends State<LoginScreen> {
             Expanded(
               child: _RoundedInput(
                 controller: _codeController,
-                hintText: '输入 6 位验证码',
+                hintText: '输入 4 或 6 位验证码',
                 keyboardType: TextInputType.number,
                 prefixIcon: CupertinoIcons.number,
                 onChanged: (_) => setState(() {}),
