@@ -208,8 +208,8 @@ module.exports = async function verifySmsHandler(req, res) {
     return;
   }
 
-  if (code.length !== 6 || !/^\d{6}$/.test(code)) {
-    sendJson(res, 400, { error: '验证码格式不正确（必须为6位数字）。' });
+  if (!/^\d{4}$|^\d{6}$/.test(code)) {
+    sendJson(res, 400, { error: '验证码格式不正确（必须为4位或6位数字）。' });
     return;
   }
 
