@@ -117,9 +117,11 @@ module.exports = async function sendSmsHandler(req, res) {
     // Generate a 6-digit verification code
     const verificationCode = generateVerificationCode();
 
-    // Create TemplateParam as JSON string with the verification code
+    // Create TemplateParam as JSON string with verification code and validity period (in minutes)
+    // The "min" field specifies the validity period (5 minutes) and must be a string
     const templateParam = JSON.stringify({
       code: verificationCode,
+      min: "5",  // Validity period: 5 minutes (must be string format for Aliyun API)
     });
 
     const requestPayload = {
