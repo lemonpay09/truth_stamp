@@ -136,11 +136,11 @@ async function checkSmsVerifyCode(phoneNumber, code) {
   // Match parameters with send-sms.js for consistency
   const verifyChannel = process.env.ALIBABA_CLOUD_VERIFY_CHANNEL || 'SMS';
   
-  // Critical: Field name is "VerifyCode" (capital V and C), not "code" or "verifyCode"
-  // This must match exactly with what Aliyun's CheckSmsVerifyCode expects
+  // Critical: Field name is "verifyCode" (lowercase - JavaScript camelCase convention)
+  // Aliyun SDK expects JavaScript camelCase field names in the request payload
   const requestPayload = {
     phoneNumber,
-    VerifyCode: code,  // CRITICAL: Capital V and C - Aliyun API strict requirement
+    verifyCode: code,  // CRITICAL: lowercase camelCase - matches Aliyun SDK convention
     verifyChannel,
     // Do NOT include SchemeName if send-sms.js doesn't explicitly set it
     // This ensures parameter consistency between send and verify operations
@@ -148,7 +148,7 @@ async function checkSmsVerifyCode(phoneNumber, code) {
 
   console.log('[CheckSmsVerifyCode] Request payload:', {
     phoneNumber: phoneNumber.substring(0, 7) + '****',
-    VerifyCode: '***',
+    verifyCode: '***',
     verifyChannel,
   });
 
