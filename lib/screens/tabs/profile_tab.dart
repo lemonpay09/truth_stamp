@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../auth/login_screen.dart';
+import '../profile/security_screen.dart';
 
 class ProfileTab extends StatefulWidget {
   const ProfileTab({super.key});
@@ -73,9 +74,7 @@ class _ProfileTabState extends State<ProfileTab> {
       builder: (dialogContext) {
         return AlertDialog(
           title: const Text('确认注销账户？'),
-          content: const Text(
-            '注销后将清除当前登录态，且不可恢复。请谨慎操作。',
-          ),
+          content: const Text('注销后将清除当前登录态，且不可恢复。'),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(false),
@@ -92,7 +91,6 @@ class _ProfileTabState extends State<ProfileTab> {
         );
       },
     );
-
     if (confirmed != true) return;
 
     try {
@@ -119,61 +117,27 @@ class _ProfileTabState extends State<ProfileTab> {
     }
   }
 
+  Future<void> _openSecurityScreen({required bool isLoggedIn}) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => SecurityScreen(
+          isLoggedIn: isLoggedIn,
+          onSignOut: _signOut,
+          onDeleteAccount: _deleteAccount,
+        ),
+      ),
+    );
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
   Future<void> _openWebDoc(String url) async {
     final uri = Uri.parse(url);
     final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!opened) {
       _showSnack('无法打开链接');
     }
-  }
-
-  void _showAccountSecuritySheet() {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (sheetContext) {
-        return Container(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
-          decoration: const BoxDecoration(
-            color: Color(0xFFF8FAFC),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 44,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFCBD5E1),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-              ),
-              const SizedBox(height: 14),
-              _bentoTile(
-                icon: CupertinoIcons.lock_fill,
-                title: '修改密码（模拟）',
-                subtitle: '请在下一版本接入密码更新 API',
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  _showSnack('已进入修改密码模拟流程');
-                },
-              ),
-              const SizedBox(height: 10),
-              _bentoTile(
-                icon: CupertinoIcons.device_phone_portrait,
-                title: '设备管理（模拟）',
-                subtitle: '查看近期登录设备记录',
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  _showSnack('已进入设备管理模拟流程');
-                },
-              ),
-            ],
-          ),
-        );
-      },
-    );
   }
 
   void _showSnack(String message) {
@@ -223,9 +187,7 @@ class _ProfileTabState extends State<ProfileTab> {
                 children: [
                   Text(
                     title,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w800,
-                    ),
+                    style: const TextStyle(fontWeight: FontWeight.w800),
                   ),
                   const SizedBox(height: 2),
                   Text(
@@ -297,7 +259,7 @@ class _ProfileTabState extends State<ProfileTab> {
                 ),
               ),
               child: const Text(
-                '登录 / 注册',
+                '登录/注册',
                 style: TextStyle(fontWeight: FontWeight.w800),
               ),
             ),
@@ -403,37 +365,23 @@ class _ProfileTabState extends State<ProfileTab> {
               ],
             ),
           ),
-          const SizedBox(height: 12),
-          FilledButton(
-            onPressed: _signOut,
-            style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFF111827),
-              padding: const EdgeInsets.symmetric(vertical: 13),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-            ),
-            child: const Text(
-              '退出登录',
-              style: TextStyle(fontWeight: FontWeight.w700),
-            ),
-          ),
         ],
       ),
     );
   }
 
   Widget _buildBody(User? user) {
+    final isLoggedIn = user != null;
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
       children: [
-        user == null ? _unauthHeaderCard() : _authHeaderCard(user),
+        isLoggedIn ? _authHeaderCard(user) : _unauthHeaderCard(),
         const SizedBox(height: 16),
         _bentoTile(
           icon: CupertinoIcons.lock_shield_fill,
           title: '账户安全中心',
-          subtitle: '密码、设备、风险提醒',
-          onTap: _showAccountSecuritySheet,
+          subtitle: '修改密码、设备管理、退出与注销',
+          onTap: () => _openSecurityScreen(isLoggedIn: isLoggedIn),
           iconColor: const Color(0xFF0A8F3E),
         ),
         const SizedBox(height: 10),
@@ -457,23 +405,6 @@ class _ProfileTabState extends State<ProfileTab> {
           subtitle: '常见问题与操作指南',
           onTap: () => _openWebDoc('https://truth-stamp.vercel.app/help'),
           iconColor: const Color(0xFF2563EB),
-        ),
-        const SizedBox(height: 16),
-        FilledButton.icon(
-          onPressed: user == null ? null : _deleteAccount,
-          style: FilledButton.styleFrom(
-            backgroundColor: const Color(0xFFDC2626),
-            disabledBackgroundColor: const Color(0xFFFCA5A5),
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-            ),
-          ),
-          icon: const Icon(CupertinoIcons.delete_solid),
-          label: const Text(
-            '账户注销 (Delete Account)',
-            style: TextStyle(fontWeight: FontWeight.w800),
-          ),
         ),
       ],
     );

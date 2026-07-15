@@ -12,6 +12,26 @@
     {
       "src": "/api/lookup",
       "dest": "/api/lookup.js"
+    },
+    {
+      "src": "/api/send-sms",
+      "dest": "/api/send-sms.js"
+    },
+    {
+      "src": "/api/verify-sms",
+      "dest": "/api/verify-sms.js"
+    },
+    {
+      "src": "/api/admin/users",
+      "dest": "/api/admin/users.js"
+    },
+    {
+      "src": "/admin",
+      "dest": "/public/admin/index.html"
+    },
+    {
+      "src": "/admin/(.*)",
+      "dest": "/public/admin/$1"
     }
   ]
 }

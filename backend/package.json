@@ -11,7 +11,10 @@
     "deploy": "vercel deploy --prod"
   },
   "dependencies": {
+    "@alicloud/dypnsapi20170525": "^2.0.0",
+    "@alicloud/openapi-client": "^0.4.15",
     "@supabase/supabase-js": "^2.45.4",
-    "cors": "^2.8.5"
+    "cors": "^2.8.5",
+    "jsonwebtoken": "^9.0.2"
   }
 }

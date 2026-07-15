@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ui';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 enum _LoginMode { phone, email }
@@ -17,6 +19,8 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  static const String _backendBaseUrl = 'https://truthstamp.cn';
+
   final TextEditingController _phoneController = TextEditingController();
   final TextEditingController _codeController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
@@ -25,7 +29,6 @@ class _LoginScreenState extends State<LoginScreen> {
   _LoginMode _loginMode = _LoginMode.phone;
   _EmailAuthMode _emailAuthMode = _EmailAuthMode.otp;
   bool _isBusy = false;
-  bool _codeSent = false;
   int _countdown = 0;
   Timer? _countdownTimer;
 
@@ -35,6 +38,12 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (_) {
       return null;
     }
+  }
+
+  bool get _canSubmitPhoneLogin {
+    return _phoneController.text.trim().length == 11 &&
+        _codeController.text.trim().length == 6 &&
+        !_isBusy;
   }
 
   @override
@@ -51,7 +60,6 @@ class _LoginScreenState extends State<LoginScreen> {
     _countdownTimer?.cancel();
     setState(() {
       _countdown = 60;
-      _codeSent = true;
     });
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted) return;
@@ -66,27 +74,82 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _sendPhoneCode() async {
     final phone = _phoneController.text.trim();
-    if (phone.length < 11) {
+    if (phone.length != 11) {
       _showMessage('请输入正确手机号');
       return;
     }
-    _startCountdown();
-    _showMessage('验证码已发送（高保真模拟）');
+    setState(() => _isBusy = true);
+    try {
+      final response = await http.post(
+        Uri.parse('$_backendBaseUrl/api/send-sms'),
+        headers: const <String, String>{
+          'Content-Type': 'application/json; charset=utf-8',
+        },
+        body: '{"phoneNumber":"$phone"}',
+      );
+      final payload = response.body.isEmpty
+          ? <String, dynamic>{}
+          : Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw StateError(
+          payload['error']?.toString() ?? '验证码发送失败（${response.statusCode}）',
+        );
+      }
+      _startCountdown();
+      _showMessage('验证码已发送');
+    } catch (error) {
+      _showMessage('发送失败：$error');
+    } finally {
+      if (mounted) {
+        setState(() => _isBusy = false);
+      }
+    }
   }
 
   Future<void> _loginWithPhoneCode() async {
     final phone = _phoneController.text.trim();
     final code = _codeController.text.trim();
-    if (phone.length < 11 || code.length != 6) {
+    if (phone.length != 11 || code.length != 6) {
       _showMessage('请输入手机号和 6 位验证码');
       return;
     }
 
     setState(() => _isBusy = true);
-    await Future<void>.delayed(const Duration(milliseconds: 550));
-    if (!mounted) return;
-    setState(() => _isBusy = false);
-    Navigator.of(context).pop(true);
+    try {
+      final response = await http.post(
+        Uri.parse('$_backendBaseUrl/api/verify-sms'),
+        headers: const <String, String>{
+          'Content-Type': 'application/json; charset=utf-8',
+        },
+        body: '{"phoneNumber":"$phone","code":"$code"}',
+      );
+      final data = response.body.isEmpty
+          ? <String, dynamic>{}
+          : Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw StateError(
+          data['error']?.toString() ?? '验证码校验失败（${response.statusCode}）',
+        );
+      }
+
+      final session = data['session'];
+      final refreshToken = session is Map ? session['refresh_token'] : null;
+      final client = _client;
+      if (client != null &&
+          refreshToken is String &&
+          refreshToken.isNotEmpty) {
+        await client.auth.setSession(refreshToken);
+      }
+
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } catch (error) {
+      _showMessage('登录失败：$error');
+    } finally {
+      if (mounted) {
+        setState(() => _isBusy = false);
+      }
+    }
   }
 
   Future<void> _loginWithEmailOtp() async {
@@ -180,6 +243,7 @@ class _LoginScreenState extends State<LoginScreen> {
           hintText: '请输入手机号',
           keyboardType: TextInputType.phone,
           prefixIcon: CupertinoIcons.phone_fill,
+          onChanged: (_) => setState(() {}),
         ),
         const SizedBox(height: 10),
         Row(
@@ -190,6 +254,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 hintText: '输入 6 位验证码',
                 keyboardType: TextInputType.number,
                 prefixIcon: CupertinoIcons.number,
+                onChanged: (_) => setState(() {}),
               ),
             ),
             const SizedBox(width: 10),
@@ -210,8 +275,8 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
         const SizedBox(height: 14),
         _PrimaryActionButton(
-          title: _codeSent ? '验证码登录' : '先获取验证码',
-          onPressed: _codeSent ? _loginWithPhoneCode : _sendPhoneCode,
+          title: '注册/登录',
+          onPressed: _canSubmitPhoneLogin ? _loginWithPhoneCode : null,
           loading: _isBusy,
         ),
       ],
@@ -384,6 +449,7 @@ class _RoundedInput extends StatelessWidget {
     required this.prefixIcon,
     this.keyboardType,
     this.obscureText = false,
+    this.onChanged,
   });
 
   final TextEditingController controller;
@@ -391,6 +457,7 @@ class _RoundedInput extends StatelessWidget {
   final IconData prefixIcon;
   final TextInputType? keyboardType;
   final bool obscureText;
+  final ValueChanged<String>? onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -403,6 +470,7 @@ class _RoundedInput extends StatelessWidget {
         controller: controller,
         keyboardType: keyboardType,
         obscureText: obscureText,
+        onChanged: onChanged,
         decoration: InputDecoration(
           hintText: hintText,
           border: InputBorder.none,
@@ -422,7 +490,7 @@ class _PrimaryActionButton extends StatelessWidget {
   });
 
   final String title;
-  final Future<void> Function() onPressed;
+  final Future<void> Function()? onPressed;
   final bool loading;
 
   @override
