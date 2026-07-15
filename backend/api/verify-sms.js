@@ -126,13 +126,32 @@ async function ensureAuthUser(serviceClient, phoneNumber) {
   return { email, password };
 }
 
+/**
+ * Verify SMS code with Aliyun API
+ * Ensures all parameters match the send-sms.js request for consistency
+ */
 async function checkSmsVerifyCode(phoneNumber, code) {
   const client = createDypnsClient();
+  
+  // Match parameters with send-sms.js for consistency
+  const verifyChannel = process.env.ALIBABA_CLOUD_VERIFY_CHANNEL || 'SMS';
+  
+  // Critical: Field name is "VerifyCode" (capital V and C), not "code" or "verifyCode"
+  // This must match exactly with what Aliyun's CheckSmsVerifyCode expects
   const requestPayload = {
     phoneNumber,
-    verifyCode: code,
-    verifyChannel: process.env.ALIBABA_CLOUD_VERIFY_CHANNEL || 'SMS',
+    VerifyCode: code,  // CRITICAL: Capital V and C - Aliyun API strict requirement
+    verifyChannel,
+    // Do NOT include SchemeName if send-sms.js doesn't explicitly set it
+    // This ensures parameter consistency between send and verify operations
   };
+
+  console.log('[CheckSmsVerifyCode] Request payload:', {
+    phoneNumber: phoneNumber.substring(0, 7) + '****',
+    VerifyCode: '***',
+    verifyChannel,
+  });
+
   const CheckRequestClass =
     Dypnsapi20170525.CheckSmsVerifyCodeRequest ||
     (Dypnsapi20170525.default &&
@@ -146,11 +165,17 @@ async function checkSmsVerifyCode(phoneNumber, code) {
     ['checkSmsVerifyCode', 'checkSmsVerifyCodeWithOptions'],
     request,
   );
+  
   const bodyData = response?.body || response;
   const success = (bodyData?.code || '').toString().toUpperCase() === 'OK';
+  
   if (!success) {
-    throw new Error(bodyData?.message || '验证码校验失败');
+    const errorMsg = bodyData?.message || '验证码校验失败';
+    console.error('[CheckSmsVerifyCode] Failed:', errorMsg);
+    throw new Error(errorMsg);
   }
+
+  console.log('[CheckSmsVerifyCode] Success');
 }
 
 module.exports = async function verifySmsHandler(req, res) {
@@ -177,14 +202,23 @@ module.exports = async function verifySmsHandler(req, res) {
 
   const phoneNumber = normalizePhone(body.phoneNumber);
   const code = typeof body.code === 'string' ? body.code.trim() : '';
-  if (!phoneNumber || phoneNumber.length < 11 || code.length !== 6) {
-    sendJson(res, 400, { error: '手机号或验证码格式不正确。' });
+  
+  if (!phoneNumber || phoneNumber.length < 11) {
+    sendJson(res, 400, { error: '手机号格式不正确。' });
+    return;
+  }
+
+  if (code.length !== 6 || !/^\d{6}$/.test(code)) {
+    sendJson(res, 400, { error: '验证码格式不正确（必须为6位数字）。' });
     return;
   }
 
   try {
+    // Step 1: Verify the SMS code with Aliyun API (with strict parameter matching)
     await checkSmsVerifyCode(phoneNumber, code);
+    console.log(`[verify-sms] SMS code verified for phone: ${phoneNumber.substring(0, 7)}****`);
   } catch (error) {
+    console.error(`[verify-sms] SMS verification failed:`, error.message);
     sendJson(res, 401, {
       ok: false,
       error: `验证码校验失败：${error.message || '请重试'}`,
@@ -193,11 +227,17 @@ module.exports = async function verifySmsHandler(req, res) {
   }
 
   try {
+    // Step 2: Create or fetch user in Supabase
     const { service, anon } = getSupabaseClients();
     const { email, password } = await ensureAuthUser(service, phoneNumber);
+    
+    console.log(`[verify-sms] User ensured for phone: ${phoneNumber.substring(0, 7)}****`);
+
+    // Step 3: Sign in with the generated credentials
     const signInResult = await anon.auth.signInWithPassword({ email, password });
 
     if (signInResult.error || !signInResult.data?.session || !signInResult.data?.user) {
+      console.error('[verify-sms] Sign-in failed:', signInResult.error?.message);
       sendJson(res, 500, {
         ok: false,
         error: signInResult.error?.message || '登录会话生成失败',
@@ -209,19 +249,25 @@ module.exports = async function verifySmsHandler(req, res) {
     const session = signInResult.data.session;
     const defaultRole = 'Free';
 
+    console.log(`[verify-sms] Session created for user: ${user.id.substring(0, 8)}...`);
+
+    // Step 4: Upsert user record in app_users table (non-critical)
     const { error: upsertError } = await service.from('app_users').upsert(
       {
         user_id: user.id,
         phone_number: phoneNumber,
         role: defaultRole,
+        last_login_at: new Date().toISOString(),
       },
       { onConflict: 'user_id' },
     );
+    
     if (upsertError) {
-      // Keep login success even if app_users table is not yet migrated.
-      // The admin panel will still read auth.users.
+      console.warn('[verify-sms] app_users upsert warning (non-critical):', upsertError.message);
+      // Keep login success even if app_users table is not yet migrated
     }
 
+    // Step 5: Return success response with session
     sendJson(res, 200, {
       ok: true,
       session: {
@@ -236,7 +282,10 @@ module.exports = async function verifySmsHandler(req, res) {
         role: defaultRole,
       },
     });
+
+    console.log(`[verify-sms] Login successful for phone: ${phoneNumber.substring(0, 7)}****`);
   } catch (error) {
+    console.error('[verify-sms] Supabase operation failed:', error.message);
     sendJson(res, 500, {
       ok: false,
       error: error.message || '服务器内部错误',
