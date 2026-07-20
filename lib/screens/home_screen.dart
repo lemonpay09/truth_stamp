@@ -31,7 +31,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  static const String _backendBaseUrl = 'https://truth-stamp.vercel.app';
+  static const String _backendBaseUrl = 'https://truthstamp.cn';
 
   final MetadataService _metadataService = const MetadataService();
   final CryptoService _cryptoService = const CryptoService();
@@ -916,7 +916,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     borderRadius: BorderRadius.circular(24),
                   ),
                 ),
-                onPressed: _gallerySaved ? _openCurrentVerificationDetail : null,
+                onPressed:
+                    _gallerySaved ? _openCurrentVerificationDetail : null,
                 child: const Text(
                   '查看鉴别详情',
                   style: TextStyle(fontWeight: FontWeight.w700),

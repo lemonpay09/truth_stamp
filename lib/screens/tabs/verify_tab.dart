@@ -24,7 +24,7 @@ class VerifyTab extends StatefulWidget {
 }
 
 class _VerifyTabState extends State<VerifyTab> {
-  static const String _backendBaseUrl = 'https://truth-stamp.vercel.app';
+  static const String _backendBaseUrl = 'https://truthstamp.cn';
 
   final ImagePicker _imagePicker = ImagePicker();
   final ExifService _exifService = const ExifService();

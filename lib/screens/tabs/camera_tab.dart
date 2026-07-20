@@ -51,7 +51,7 @@ class _CameraCaptureResult {
 }
 
 class _CameraTabState extends State<CameraTab> {
-  static const String _backendBaseUrl = 'https://truth-stamp.vercel.app';
+  static const String _backendBaseUrl = 'https://truthstamp.cn';
 
   final MetadataService _metadataService = const MetadataService();
   final CryptoService _cryptoService = const CryptoService();
