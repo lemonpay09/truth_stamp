@@ -6,9 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 
 import '../../models/verification_record.dart';
-import '../../services/exif_service.dart';
 import '../../services/verification_history_service.dart';
-import '../../services/watermark_service.dart';
 import '../verification_detail_screen.dart';
 
 class VerifyTab extends StatefulWidget {
@@ -24,15 +22,13 @@ class VerifyTab extends StatefulWidget {
 }
 
 class _VerifyTabState extends State<VerifyTab> {
-  static const String _backendBaseUrl = 'https://truthstamp.cn';
+  static const String _detectorApiUrl = 'http://192.168.3.107:8000/api/detect';
 
   final ImagePicker _imagePicker = ImagePicker();
-  final ExifService _exifService = const ExifService();
-  final WatermarkService _watermarkService = const WatermarkService();
-  final http.Client _httpClient = http.Client();
   late final VoidCallback _historyListener;
 
   bool _isBusy = false;
+  String? _busyMessage;
   String? _errorMessage;
   List<VerificationRecord> _records = <VerificationRecord>[];
 
@@ -49,7 +45,6 @@ class _VerifyTabState extends State<VerifyTab> {
   @override
   void dispose() {
     widget.historyService.removeListener(_historyListener);
-    _httpClient.close();
     super.dispose();
   }
 
@@ -74,102 +69,96 @@ class _VerifyTabState extends State<VerifyTab> {
 
     setState(() {
       _isBusy = true;
+      _busyMessage = '正在进行物理级像素取证...';
       _errorMessage = null;
     });
 
     try {
-      final exifHash = await _exifService.extractExifHash(file);
-      final watermarkPayload =
-          await _watermarkService.extractInvisibleWatermark(file);
-      final watermarkHash = _extractHashFromWatermarkPayload(watermarkPayload);
-      final hash = exifHash ?? watermarkHash;
-
-      if (hash == null || hash.isEmpty) {
-        throw StateError('未提取到有效的哈希。');
-      }
-
-      if (exifHash != null &&
-          watermarkHash != null &&
-          exifHash != watermarkHash) {
-        throw StateError('EXIF 与盲水印哈希不一致。');
-      }
-
-      final lookup = await _lookup(hash);
-      final stamp = lookup['stamp'] as Map<String, dynamic>;
-      final verifyUrl = _verificationUrlForHash(hash);
-      final record = await widget.historyService.upsertRecord(
-        sourceImage: file,
-        hash: hash,
-        timestamp: stamp['timestamp']?.toString() ?? '-',
-        latitude: stamp['latitude']?.toString() ?? '-',
-        longitude: stamp['longitude']?.toString() ?? '-',
-        accuracy: stamp['accuracy']?.toString() ?? '-',
-        createdAt: stamp['created_at']?.toString() ?? '-',
-        verifyUrl: verifyUrl,
-      );
-
+      final result = await _detectWithDetector(file);
       if (!mounted) return;
-      await _openDetail(record);
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => VerificationDetailScreen(
+            isDetectorResult: true,
+            detectorHeatmapImage: result.heatmapImage,
+            metadataScore: result.metadataScore,
+            forgeryScore: result.forgeryScore,
+            detectorMessage: result.message,
+            isForgery: result.isForgery,
+            hash: '-',
+            timestamp: '-',
+            latitude: '-',
+            longitude: '-',
+            accuracy: '-',
+            createdAt: '-',
+            verifyUrl: '',
+          ),
+        ),
+      );
     } on Exception catch (error) {
       if (!mounted) return;
       setState(() => _errorMessage = '鉴别失败：$error');
     } finally {
       if (mounted) {
-        setState(() => _isBusy = false);
+        setState(() {
+          _isBusy = false;
+          _busyMessage = null;
+        });
       }
     }
   }
 
-  String? _extractHashFromWatermarkPayload(String? payload) {
-    if (payload == null || payload.isEmpty) return null;
-    final uri = Uri.tryParse(payload);
-    final queryHash = uri?.queryParameters['hash'];
-    if (queryHash != null && queryHash.isNotEmpty) return queryHash;
-    return payload.trim();
-  }
+  Future<_DetectorResult> _detectWithDetector(File file) async {
+    final request = http.MultipartRequest('POST', Uri.parse(_detectorApiUrl));
+    request.headers['Accept'] = 'application/json';
+    request.files.add(
+      await http.MultipartFile.fromPath(
+        'file',
+        file.path,
+        filename: file.uri.pathSegments.isNotEmpty
+            ? file.uri.pathSegments.last
+            : 'upload.jpg',
+      ),
+    );
 
-  String _verificationUrlForHash(String hash) {
-    return Uri.parse('$_backendBaseUrl/api/verify')
-        .replace(queryParameters: <String, String>{'hash': hash})
-        .toString();
-  }
-
-  Future<Map<String, dynamic>> _lookup(String hash) async {
-    final response = await _httpClient
-        .get(
-          Uri.parse('$_backendBaseUrl/api/lookup')
-              .replace(queryParameters: <String, String>{'hash': hash}),
-        )
-        .timeout(const Duration(seconds: 15));
+    final streamResponse = await request.send().timeout(
+      const Duration(seconds: 40),
+      onTimeout: () {
+        throw StateError('算法服务超时，请确认 Python 鉴伪服务正在运行。');
+      },
+    );
+    final response = await http.Response.fromStream(streamResponse);
+    final rawBody = response.body.trim();
+    final decoded = rawBody.isEmpty ? <String, dynamic>{} : jsonDecode(rawBody);
+    final body = decoded is Map<String, dynamic>
+        ? decoded
+        : <String, dynamic>{'raw': rawBody};
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw StateError(_extractError(response.body, response.statusCode));
+      final detail = body['detail']?.toString();
+      throw StateError(detail ??
+          body['error']?.toString() ??
+          '检测接口异常（${response.statusCode}）');
     }
 
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map<String, dynamic> || decoded['found'] != true) {
-      throw StateError('云端未找到对应记录。');
+    final heatmap = body['heatmap_image']?.toString() ?? '';
+    if (heatmap.isEmpty) {
+      throw StateError('算法服务未返回 heatmap_image。');
     }
 
-    final stamp = decoded['stamp'];
-    if (stamp is! Map<String, dynamic>) {
-      throw StateError('云端返回的数据格式异常。');
-    }
-
-    return <String, dynamic>{'stamp': stamp};
+    return _DetectorResult(
+      isForgery: body['is_forgery'] == true,
+      metadataScore: _asInt(body['metadata_score']),
+      forgeryScore: _asInt(body['forgery_score']),
+      heatmapImage: heatmap,
+      message: body['message']?.toString() ?? '取证完成',
+    );
   }
 
-  String _extractError(String body, int statusCode) {
-    if (body.trim().isEmpty) return 'HTTP $statusCode';
-    try {
-      final decoded = jsonDecode(body);
-      if (decoded is Map<String, dynamic> && decoded['error'] is String) {
-        return decoded['error'] as String;
-      }
-    } on FormatException {
-      // ignore
-    }
-    return body;
+  int _asInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.round();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
   }
 
   Future<void> _openDetail(VerificationRecord record) async {
@@ -247,7 +236,7 @@ class _VerifyTabState extends State<VerifyTab> {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              '本地提取 EXIF 与盲水印，再查询云端记录。',
+                              '上传算法服务器进行像素误差取证，生成篡改热力图。',
                               style: theme.textTheme.bodyMedium?.copyWith(
                                 color: theme.colorScheme.onSurfaceVariant,
                               ),
@@ -276,7 +265,7 @@ class _VerifyTabState extends State<VerifyTab> {
                       ),
                       onPressed: _isBusy ? null : _importAndVerify,
                       child: Text(
-                        _isBusy ? '鉴别中...' : '导入鉴别',
+                        _isBusy ? '取证中...' : '导入鉴别',
                         style: const TextStyle(
                           color: Color(0xFF0F172A),
                           fontWeight: FontWeight.w800,
@@ -292,6 +281,16 @@ class _VerifyTabState extends State<VerifyTab> {
               Text(
                 _errorMessage!,
                 style: const TextStyle(color: Colors.redAccent),
+              ),
+            ],
+            if (_busyMessage != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                _busyMessage!,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: const Color(0xFF2563EB),
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ],
             const SizedBox(height: 18),
@@ -319,7 +318,8 @@ class _VerifyTabState extends State<VerifyTab> {
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(28),
                 ),
-                padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 24),
+                padding:
+                    const EdgeInsets.symmetric(vertical: 36, horizontal: 24),
                 child: Column(
                   children: [
                     Container(
@@ -412,7 +412,8 @@ class _VerifyTabState extends State<VerifyTab> {
                             ),
                           ),
                           const SizedBox(width: 8),
-                          const Icon(Icons.chevron_right_rounded, color: Color(0xFF9CA3AF)),
+                          const Icon(Icons.chevron_right_rounded,
+                              color: Color(0xFF9CA3AF)),
                         ],
                       ),
                     ),
@@ -435,4 +436,20 @@ class _VerifyTabState extends State<VerifyTab> {
       child: const Icon(Icons.photo_rounded, color: Color(0xFF9CA3AF)),
     );
   }
+}
+
+class _DetectorResult {
+  const _DetectorResult({
+    required this.isForgery,
+    required this.metadataScore,
+    required this.forgeryScore,
+    required this.heatmapImage,
+    required this.message,
+  });
+
+  final bool isForgery;
+  final int metadataScore;
+  final int forgeryScore;
+  final String heatmapImage;
+  final String message;
 }

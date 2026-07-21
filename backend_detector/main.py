@@ -196,8 +196,13 @@ async def health() -> dict[str, str]:
 
 @app.post("/api/detect")
 async def detect_forgery(file: UploadFile = File(...)) -> dict[str, Any]:
-    if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="仅支持图片文件上传")
+    allowed_mime_types = {"image/jpeg", "image/jpg", "image/png"}
+    content_type = (file.content_type or "").lower()
+    if content_type not in allowed_mime_types:
+        raise HTTPException(
+            status_code=400,
+            detail="仅支持 JPEG/PNG 图片上传（image/jpeg, image/png）",
+        )
 
     image_bytes = await file.read()
     if not image_bytes:

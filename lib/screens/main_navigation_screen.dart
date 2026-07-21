@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../services/verification_history_service.dart';
 import 'tabs/camera_tab.dart';
 import 'tabs/profile_tab.dart';
+import 'tabs/ts_verify_tab.dart';
 import 'tabs/verify_tab.dart';
 
 class MainNavigationScreen extends StatefulWidget {
@@ -27,7 +28,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
   late final List<Widget> _tabs = <Widget>[
     CameraTab(cameras: widget.cameras, historyService: _historyService),
-    VerifyTab(historyService: _historyService),
+    VerifyTab(historyService: _historyService), // Detect (ELA)
+    TsVerifyTab(historyService: _historyService), // Verify (EXIF + watermark)
     const ProfileTab(),
   ];
 
@@ -58,7 +60,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             child: BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
               child: Container(
-                height: 78,
+                height: 80,
                 decoration: BoxDecoration(
                   color: Colors.white.withOpacity(0.78),
                   borderRadius: BorderRadius.circular(24),
@@ -72,36 +74,39 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                   ],
                 ),
                 child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: [
-                    Expanded(
-                      child: _NavItem(
-                        label: '相机',
-                        icon: CupertinoIcons.camera_fill,
-                        selected: _currentIndex == 0,
-                        onTap: () => _setIndex(0),
-                        activeColor: const Color(0xFF0A8F3E),
-                        inactiveColor: theme.colorScheme.onSurfaceVariant,
-                      ),
+                    _NavItem(
+                      label: '相机',
+                      icon: CupertinoIcons.camera_fill,
+                      selected: _currentIndex == 0,
+                      onTap: () => _setIndex(0),
+                      activeColor: const Color(0xFF0A8F3E),
+                      inactiveColor: theme.colorScheme.onSurfaceVariant,
                     ),
-                    Expanded(
-                      child: _NavItem(
-                        label: '鉴伪',
-                        icon: CupertinoIcons.shield_lefthalf_fill,
-                        selected: _currentIndex == 1,
-                        onTap: () => _setIndex(1),
-                        activeColor: const Color(0xFF0B5FFF),
-                        inactiveColor: theme.colorScheme.onSurfaceVariant,
-                      ),
+                    _NavItem(
+                      label: '鉴伪',
+                      icon: CupertinoIcons.waveform_path_ecg,
+                      selected: _currentIndex == 1,
+                      onTap: () => _setIndex(1),
+                      activeColor: const Color(0xFF0B5FFF),
+                      inactiveColor: theme.colorScheme.onSurfaceVariant,
                     ),
-                    Expanded(
-                      child: _NavItem(
-                        label: '我的',
-                        icon: CupertinoIcons.person_crop_circle_fill,
-                        selected: _currentIndex == 2,
-                        onTap: () => _setIndex(2),
-                        activeColor: const Color(0xFF111827),
-                        inactiveColor: theme.colorScheme.onSurfaceVariant,
-                      ),
+                    _NavItem(
+                      label: '验证',
+                      icon: CupertinoIcons.checkmark_shield_fill,
+                      selected: _currentIndex == 2,
+                      onTap: () => _setIndex(2),
+                      activeColor: const Color(0xFF7C3AED),
+                      inactiveColor: theme.colorScheme.onSurfaceVariant,
+                    ),
+                    _NavItem(
+                      label: '我的',
+                      icon: CupertinoIcons.person_crop_circle_fill,
+                      selected: _currentIndex == 3,
+                      onTap: () => _setIndex(3),
+                      activeColor: const Color(0xFF111827),
+                      inactiveColor: theme.colorScheme.onSurfaceVariant,
                     ),
                   ],
                 ),
@@ -133,17 +138,19 @@ class _NavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final selectedColor = selected ? activeColor : inactiveColor;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(24),
       child: Center(
         child: AnimatedScale(
-          scale: selected ? 1.06 : 1.0,
-          duration: const Duration(milliseconds: 220),
+          scale: selected ? 1.05 : 1.0,
+          duration: const Duration(milliseconds: 180),
           curve: Curves.easeOutBack,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 220),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            duration: const Duration(milliseconds: 180),
+            width: 74,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
             decoration: BoxDecoration(
               color: selected
                   ? activeColor.withOpacity(0.10)
@@ -156,17 +163,20 @@ class _NavItem extends StatelessWidget {
               children: [
                 Icon(
                   icon,
-                  size: selected ? 23 : 21,
-                  color: selected ? activeColor : inactiveColor,
+                  size: selected ? 21 : 20,
+                  color: selectedColor,
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 3),
                 Text(
                   label,
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: 10.5,
                     fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-                    color: selected ? activeColor : inactiveColor,
+                    color: selectedColor,
                   ),
+                  maxLines: 1,
+                  overflow: TextOverflow.fade,
+                  softWrap: false,
                 ),
               ],
             ),
