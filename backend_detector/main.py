@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import tempfile
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -11,6 +12,8 @@ import piexif
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, UnidentifiedImageError
+
+from ai.model_service import AIModelService
 
 try:
     import pillow_heif
@@ -29,6 +32,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 初始化 AI 推理服务（支持 ONNX 或数学降级）
+ai_service = AIModelService(model_path="model.onnx")
 
 
 @dataclass
@@ -253,24 +259,42 @@ async def detect_forgery(file: UploadFile = File(...)) -> dict[str, Any]:
     try:
         metadata_task = asyncio.to_thread(analyze_exif_metadata, normalized_bytes)
         ela_task = asyncio.to_thread(run_ela_and_edge_detection, normalized_bytes)
-        metadata_result, ela_result = await asyncio.gather(metadata_task, ela_task)
+        
+        # 创建临时文件用于 AI 推理（AI 服务需要文件路径）
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            tmp.write(normalized_bytes)
+            temp_image_path = tmp.name
+        
+        ai_task = asyncio.to_thread(ai_service.predict_ai_score, temp_image_path)
+        metadata_result, ela_result, ai_score_float = await asyncio.gather(
+            metadata_task, ela_task, ai_task
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"检测失败: {exc}") from exc
-
-    combined_score = int(round(0.35 * (100 - metadata_result.score) + 0.65 * ela_result.score))
-    is_forgery = combined_score >= 60
-    message = build_report_message(metadata_result.score, ela_result.score, metadata_result.reasons)
+    
+    # 多模态融合：ELA (65%) + AI (35%)
+    # AI 分数是 0.0~1.0，转换为 0~100
+    ai_score_100 = int(round(ai_score_float * 100))
+    
+    # 融合后的最终篡改分数
+    final_forgery_score = int(round(0.65 * ela_result.score + 0.35 * ai_score_100))
+    is_forgery = final_forgery_score >= 60
+    
+    # 根据融合分数重新生成报告信息
+    message = build_report_message(metadata_result.score, final_forgery_score, metadata_result.reasons)
 
     return {
         "is_forgery": is_forgery,
         "metadata_score": metadata_result.score,
-        "forgery_score": ela_result.score,
+        "forgery_score": final_forgery_score,
         "heatmap_image": ela_result.heatmap_b64,
         "message": message,
         "details": {
-            "combined_risk_score": combined_score,
+            "ela_score": ela_result.score,
+            "ai_score": ai_score_100,
+            "combined_risk_score": final_forgery_score,
             "metadata_reasons": metadata_result.reasons,
             "ela": ela_result.details,
             "filename": file.filename,
