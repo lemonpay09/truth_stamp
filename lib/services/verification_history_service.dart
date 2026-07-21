@@ -77,6 +77,7 @@ class VerificationHistoryService extends ChangeNotifier {
     String? thumbnailBase64,
     String? heatmapBase64,
     String? metadataScore,
+    String? aiScore,
     String? forgeryScore,
     String? conclusion,
   }) async {
@@ -99,6 +100,7 @@ class VerificationHistoryService extends ChangeNotifier {
       thumbnailBase64: thumbnailBase64,
       heatmapBase64: heatmapBase64,
       metadataScore: metadataScore,
+      aiScore: aiScore,
       forgeryScore: forgeryScore,
       conclusion: conclusion,
     );
