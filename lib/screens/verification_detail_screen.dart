@@ -17,6 +17,7 @@ class VerificationDetailScreen extends StatelessWidget {
     this.isDetectorResult = false,
     this.detectorHeatmapImage,
     this.metadataScore,
+    this.aiScore,
     this.forgeryScore,
     this.detectorMessage,
     this.detectorConclusion,
@@ -34,6 +35,7 @@ class VerificationDetailScreen extends StatelessWidget {
   final bool isDetectorResult;
   final String? detectorHeatmapImage;
   final int? metadataScore;
+  final int? aiScore;
   final int? forgeryScore;
   final String? detectorMessage;
   final String? detectorConclusion;
@@ -195,10 +197,10 @@ class VerificationDetailScreen extends StatelessWidget {
             ),
             _bentoMetricCard(
               theme: theme,
-              title: 'AI 生成特征 (CNN)',
-              value: '${metadataScore ?? 0}',
-              suffix: '/100',
-              tint: _scoreColor(metadataScore ?? 0),
+              title: 'AI 生成概率',
+              value: '${aiScore ?? 0}',
+              suffix: '%',
+              tint: _scoreColor(aiScore ?? 0),
             ),
             _bentoMetricCard(
               theme: theme,

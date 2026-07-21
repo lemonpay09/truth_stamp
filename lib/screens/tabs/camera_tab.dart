@@ -332,6 +332,7 @@ class _CameraTabState extends State<CameraTab> {
                               accuracy: result.accuracy,
                               createdAt: result.createdAt,
                               verifyUrl: result.verifyUrl,
+                              aiScore: null,
                             ),
                           ),
                         );

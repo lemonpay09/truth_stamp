@@ -99,6 +99,7 @@ class _VerifyTabState extends State<VerifyTab> {
         metadataScore: result.metadataScore.toString(),
         forgeryScore: result.forgeryScore.toString(),
         conclusion: conclusion,
+        aiScore: result.aiScore.toString(),
       );
 
       if (!mounted) return;
@@ -108,6 +109,7 @@ class _VerifyTabState extends State<VerifyTab> {
             isDetectorResult: true,
             detectorHeatmapImage: result.heatmapImage,
             metadataScore: result.metadataScore,
+            aiScore: result.aiScore,
             forgeryScore: result.forgeryScore,
             detectorMessage: result.message,
             isForgery: result.isForgery,
@@ -179,10 +181,14 @@ class _VerifyTabState extends State<VerifyTab> {
       throw StateError('算法服务未返回 heatmap_image。');
     }
 
+    final details = body['details'] as Map<String, dynamic>? ?? <String, dynamic>{};
+    final aiScore = _asInt(details['ai_score']);
+
     return _DetectorResult(
       isForgery: body['is_forgery'] == true,
       metadataScore: _asInt(body['metadata_score']),
       forgeryScore: _asInt(body['forgery_score']),
+      aiScore: aiScore,
       heatmapImage: heatmap,
       message: body['message']?.toString() ?? '取证完成',
     );
@@ -227,6 +233,7 @@ class _VerifyTabState extends State<VerifyTab> {
           isDetectorResult: true,
           detectorHeatmapImage: record.heatmapBase64,
           metadataScore: int.tryParse(record.metadataScore ?? ''),
+          aiScore: int.tryParse(record.aiScore ?? ''),
           forgeryScore: int.tryParse(record.forgeryScore ?? ''),
           detectorConclusion: record.conclusion,
         ),
@@ -517,6 +524,7 @@ class _DetectorResult {
     required this.isForgery,
     required this.metadataScore,
     required this.forgeryScore,
+    required this.aiScore,
     required this.heatmapImage,
     required this.message,
   });
@@ -524,6 +532,7 @@ class _DetectorResult {
   final bool isForgery;
   final int metadataScore;
   final int forgeryScore;
+  final int aiScore;
   final String heatmapImage;
   final String message;
 }

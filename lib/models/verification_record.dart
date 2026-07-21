@@ -12,6 +12,7 @@ class VerificationRecord {
     this.thumbnailBase64,
     this.heatmapBase64,
     this.metadataScore,
+    this.aiScore,
     this.forgeryScore,
     this.conclusion,
   });
@@ -28,6 +29,7 @@ class VerificationRecord {
   final String? thumbnailBase64;
   final String? heatmapBase64;
   final String? metadataScore;
+  final String? aiScore;
   final String? forgeryScore;
   final String? conclusion;
 
@@ -50,6 +52,7 @@ class VerificationRecord {
       'thumbnailBase64': thumbnailBase64,
       'heatmapBase64': heatmapBase64,
       'metadataScore': metadataScore,
+      'aiScore': aiScore,
       'forgeryScore': forgeryScore,
       'conclusion': conclusion,
     };
@@ -69,6 +72,7 @@ class VerificationRecord {
       thumbnailBase64: json['thumbnailBase64']?.toString(),
       heatmapBase64: json['heatmapBase64']?.toString(),
       metadataScore: json['metadataScore']?.toString(),
+      aiScore: json['aiScore']?.toString(),
       forgeryScore: json['forgeryScore']?.toString(),
       conclusion: json['conclusion']?.toString(),
     );
