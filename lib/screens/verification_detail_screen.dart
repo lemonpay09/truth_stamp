@@ -195,6 +195,13 @@ class VerificationDetailScreen extends StatelessWidget {
             ),
             _bentoMetricCard(
               theme: theme,
+              title: 'AI 生成特征 (CNN)',
+              value: '${metadataScore ?? 0}',
+              suffix: '/100',
+              tint: _scoreColor(metadataScore ?? 0),
+            ),
+            _bentoMetricCard(
+              theme: theme,
               title: '检测结论',
               value: conclusionText,
               tint: conclusionColor,

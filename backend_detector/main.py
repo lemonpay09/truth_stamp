@@ -131,7 +131,7 @@ def analyze_exif_metadata(image_bytes: bytes) -> MetadataResult:
     return MetadataResult(score=score, reasons=reasons)
 
 
-def run_ela_and_edge_detection(image_bytes: bytes, quality: int = 95, enhance: float = 28.0) -> ElaResult:
+def run_ela_and_edge_detection(image_bytes: bytes, quality: int = 95, enhance: float = 45.0) -> ElaResult:
     try:
         pil_image = Image.open(BytesIO(image_bytes)).convert("RGB")
     except UnidentifiedImageError as exc:
