@@ -1,6 +1,5 @@
 import asyncio
 import base64
-import tempfile
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -33,8 +32,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 初始化 AI 推理服务（支持 ONNX 或数学降级）
-ai_service = AIModelService(model_path="model.onnx")
+# 初始化 AI 推理服务（IFAKE Keras 模型 或 MobileNetV2 ELA patch 分析）
+ai_service = AIModelService(model_path="ai/model.h5")
 
 
 @dataclass
@@ -257,15 +256,10 @@ async def detect_forgery(file: UploadFile = File(...)) -> dict[str, Any]:
         raise
 
     try:
+        pil_image = Image.open(BytesIO(normalized_bytes)).convert("RGB")
         metadata_task = asyncio.to_thread(analyze_exif_metadata, normalized_bytes)
         ela_task = asyncio.to_thread(run_ela_and_edge_detection, normalized_bytes)
-        
-        # 创建临时文件用于 AI 推理（AI 服务需要文件路径）
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-            tmp.write(normalized_bytes)
-            temp_image_path = tmp.name
-        
-        ai_task = asyncio.to_thread(ai_service.predict_ai_score, temp_image_path)
+        ai_task = asyncio.to_thread(ai_service.predict_ai_score, pil_image)
         metadata_result, ela_result, ai_score_float = await asyncio.gather(
             metadata_task, ela_task, ai_task
         )

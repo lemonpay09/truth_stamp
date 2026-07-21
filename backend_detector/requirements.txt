@@ -5,6 +5,5 @@ pillow
 pillow-heif
 piexif
 numpy
-onnxruntime
-scikit-image
+tensorflow
 python-multipart
