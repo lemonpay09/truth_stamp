@@ -9,15 +9,16 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await Supabase.initialize(
-    url: SupabaseConfig.url,
-    publishableKey: SupabaseConfig.anonKey,
+    url: 'https://iuqabsyyiasobbgizrtp.supabase.co',
+    publishableKey: 'sb_publishable_s_-U19FIhyJ3NYvL4glR-Q_YFViYRvW',
   );
 
   List<CameraDescription> cameras = const [];
   try {
     cameras = await availableCameras();
   } on CameraException catch (error) {
-    debugPrint('Failed to enumerate cameras: ${error.description ?? error.code}');
+    debugPrint(
+        'Failed to enumerate cameras: ${error.description ?? error.code}');
   }
 
   runApp(TruthStampApp(cameras: cameras));
