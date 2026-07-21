@@ -10,6 +10,10 @@ class VerificationRecord {
     required this.imagePath,
     required this.recordType,
     this.thumbnailBase64,
+    this.heatmapBase64,
+    this.metadataScore,
+    this.forgeryScore,
+    this.conclusion,
   });
 
   final String hash;
@@ -22,6 +26,10 @@ class VerificationRecord {
   final String imagePath;
   final String recordType; // detect | verify
   final String? thumbnailBase64;
+  final String? heatmapBase64;
+  final String? metadataScore;
+  final String? forgeryScore;
+  final String? conclusion;
 
   String get shortHash {
     if (hash.length <= 12) return hash;
@@ -40,6 +48,10 @@ class VerificationRecord {
       'imagePath': imagePath,
       'recordType': recordType,
       'thumbnailBase64': thumbnailBase64,
+      'heatmapBase64': heatmapBase64,
+      'metadataScore': metadataScore,
+      'forgeryScore': forgeryScore,
+      'conclusion': conclusion,
     };
   }
 
@@ -55,6 +67,10 @@ class VerificationRecord {
       imagePath: json['imagePath']?.toString() ?? '',
       recordType: json['recordType']?.toString() ?? 'verify',
       thumbnailBase64: json['thumbnailBase64']?.toString(),
+      heatmapBase64: json['heatmapBase64']?.toString(),
+      metadataScore: json['metadataScore']?.toString(),
+      forgeryScore: json['forgeryScore']?.toString(),
+      conclusion: json['conclusion']?.toString(),
     );
   }
 }

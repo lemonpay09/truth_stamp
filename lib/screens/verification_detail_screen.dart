@@ -19,6 +19,7 @@ class VerificationDetailScreen extends StatelessWidget {
     this.metadataScore,
     this.forgeryScore,
     this.detectorMessage,
+    this.detectorConclusion,
     this.isForgery,
   });
 
@@ -35,6 +36,7 @@ class VerificationDetailScreen extends StatelessWidget {
   final int? metadataScore;
   final int? forgeryScore;
   final String? detectorMessage;
+  final String? detectorConclusion;
   final bool? isForgery;
 
   String get _mapUrl =>
@@ -48,9 +50,8 @@ class VerificationDetailScreen extends StatelessWidget {
   Uint8List? _decodeHeatmapBytes() {
     final base64Image = detectorHeatmapImage;
     if (base64Image == null || base64Image.isEmpty) return null;
-    final normalized = base64Image.contains(',')
-        ? base64Image.split(',').last
-        : base64Image;
+    final normalized =
+        base64Image.contains(',') ? base64Image.split(',').last : base64Image;
     try {
       return base64Decode(normalized);
     } on FormatException {
@@ -62,6 +63,25 @@ class VerificationDetailScreen extends StatelessWidget {
     if (score >= 80) return const Color(0xFF0A8F3E);
     if (score >= 60) return const Color(0xFFF59E0B);
     return const Color(0xFFDC2626);
+  }
+
+  String _resolveConclusionText(int metadata, int physical) {
+    if (detectorConclusion != null && detectorConclusion!.trim().isNotEmpty) {
+      return detectorConclusion!.trim();
+    }
+    if (physical >= 80 || metadata <= 35) {
+      return '高度伪造风险';
+    }
+    if (physical >= 55 || metadata <= 60) {
+      return '疑似局部修改';
+    }
+    return '安全 (未见篡改)';
+  }
+
+  Color _conclusionColor(String value) {
+    if (value == '高度伪造风险') return const Color(0xFFDC2626);
+    if (value == '疑似局部修改') return const Color(0xFFF59E0B);
+    return const Color(0xFF0A8F3E);
   }
 
   @override
@@ -88,9 +108,8 @@ class VerificationDetailScreen extends StatelessWidget {
     final heatmapBytes = _decodeHeatmapBytes();
     final metadata = metadataScore ?? 0;
     final physical = forgeryScore ?? 0;
-    final conclusionText = (isForgery ?? false) ? '疑似篡改' : '低风险';
-    final conclusionColor =
-        (isForgery ?? false) ? const Color(0xFFDC2626) : const Color(0xFF0A8F3E);
+    final conclusionText = _resolveConclusionText(metadata, physical);
+    final conclusionColor = _conclusionColor(conclusionText);
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
@@ -146,14 +165,6 @@ class VerificationDetailScreen extends StatelessWidget {
                         ),
                 ),
               ),
-              const SizedBox(height: 12),
-              Text(
-                '图中高亮发光区域代表像素压缩误差断层，疑似后期拼接、修改或AI局部重绘。',
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                  height: 1.45,
-                ),
-              ),
             ],
           ),
         ),
@@ -170,14 +181,14 @@ class VerificationDetailScreen extends StatelessWidget {
           children: [
             _bentoMetricCard(
               theme: theme,
-              title: '元数据评分',
+              title: '原始元数据 (EXIF)',
               value: '$metadata',
               suffix: '/100',
               tint: _scoreColor(metadata),
             ),
             _bentoMetricCard(
               theme: theme,
-              title: '物理指纹评分',
+              title: '物理像素残差 (ELA)',
               value: '$physical',
               suffix: '/100',
               tint: _scoreColor(physical),
@@ -191,7 +202,7 @@ class VerificationDetailScreen extends StatelessWidget {
             _bentoMetricCard(
               theme: theme,
               title: '算法状态',
-              value: (isForgery ?? false) ? '异常特征较多' : '未见明显异常',
+              value: conclusionText == '安全 (未见篡改)' ? '未见明显异常' : '异常特征较多',
               tint: conclusionColor,
             ),
           ],
@@ -333,7 +344,8 @@ class VerificationDetailScreen extends StatelessWidget {
                     children: [
                       Text(
                         '哈希指纹',
-                        style: theme.textTheme.labelLarge?.copyWith(color: muted),
+                        style:
+                            theme.textTheme.labelLarge?.copyWith(color: muted),
                       ),
                       const SizedBox(height: 8),
                       SelectableText(

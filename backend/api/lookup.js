@@ -44,7 +44,7 @@ module.exports = async function lookupHandler(req, res) {
     const supabase = getSupabaseClient();
     const { data, error } = await supabase
       .from('stamps')
-      .select('hash, timestamp, latitude, longitude, accuracy, created_at, thumbnail_base64')
+      .select('hash, timestamp, latitude, longitude, accuracy, created_at, thumbnail_base64, heatmap_base64, metadata_score, forgery_score, conclusion')
       .eq('hash', hash)
       .maybeSingle();
 

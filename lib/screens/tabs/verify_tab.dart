@@ -80,6 +80,10 @@ class _VerifyTabState extends State<VerifyTab> {
           await _thumbnailService.generateTinyThumbnailBase64(file);
       final result = await _detectWithDetector(file);
       final now = DateTime.now();
+      final conclusion = _buildConclusion(
+        metadataScore: result.metadataScore,
+        forgeryScore: result.forgeryScore,
+      );
       final record = await widget.historyService.upsertRecord(
         sourceImage: file,
         hash: 'detect-${now.microsecondsSinceEpoch}',
@@ -91,6 +95,10 @@ class _VerifyTabState extends State<VerifyTab> {
         verifyUrl: '',
         recordType: 'detect',
         thumbnailBase64: thumbnailBase64,
+        heatmapBase64: result.heatmapImage,
+        metadataScore: result.metadataScore.toString(),
+        forgeryScore: result.forgeryScore.toString(),
+        conclusion: conclusion,
       );
 
       if (!mounted) return;
@@ -103,6 +111,7 @@ class _VerifyTabState extends State<VerifyTab> {
             forgeryScore: result.forgeryScore,
             detectorMessage: result.message,
             isForgery: result.isForgery,
+            detectorConclusion: conclusion,
             hash: record.hash,
             timestamp: '-',
             latitude: '-',
@@ -161,9 +170,7 @@ class _VerifyTabState extends State<VerifyTab> {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final detail = body['detail']?.toString();
       throw StateError(
-        detail ??
-            body['error']?.toString() ??
-            '检测接口异常（${response.statusCode}）',
+        detail ?? body['error']?.toString() ?? '检测接口异常（${response.statusCode}）',
       );
     }
 
@@ -193,6 +200,19 @@ class _VerifyTabState extends State<VerifyTab> {
     return int.tryParse(value?.toString() ?? '') ?? 0;
   }
 
+  String _buildConclusion({
+    required int metadataScore,
+    required int forgeryScore,
+  }) {
+    if (forgeryScore >= 80 || metadataScore <= 35) {
+      return '高度伪造风险';
+    }
+    if (forgeryScore >= 55 || metadataScore <= 60) {
+      return '疑似局部修改';
+    }
+    return '安全 (未见篡改)';
+  }
+
   Future<void> _openHistoryDetail(VerificationRecord record) async {
     await Navigator.of(context).push(
       MaterialPageRoute(
@@ -205,6 +225,10 @@ class _VerifyTabState extends State<VerifyTab> {
           createdAt: record.createdAt,
           verifyUrl: record.verifyUrl,
           isDetectorResult: true,
+          detectorHeatmapImage: record.heatmapBase64,
+          metadataScore: int.tryParse(record.metadataScore ?? ''),
+          forgeryScore: int.tryParse(record.forgeryScore ?? ''),
+          detectorConclusion: record.conclusion,
         ),
       ),
     );
@@ -346,7 +370,8 @@ class _VerifyTabState extends State<VerifyTab> {
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(28),
                 ),
-                padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 24),
+                padding:
+                    const EdgeInsets.symmetric(vertical: 36, horizontal: 24),
                 child: Column(
                   children: [
                     Container(
@@ -428,6 +453,16 @@ class _VerifyTabState extends State<VerifyTab> {
                                     color: theme.colorScheme.onSurfaceVariant,
                                   ),
                                 ),
+                                if ((record.conclusion ?? '').isNotEmpty) ...[
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    record.conclusion!,
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: const Color(0xFF2563EB),
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
                               ],
                             ),
                           ),

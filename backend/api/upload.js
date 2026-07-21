@@ -83,6 +83,16 @@ module.exports = async function uploadHandler(req, res) {
     typeof body.thumbnail_base64 === 'string'
       ? body.thumbnail_base64.trim()
       : null;
+  const heatmapBase64 =
+    typeof body.heatmap_base64 === 'string'
+      ? body.heatmap_base64.trim()
+      : null;
+  const metadataScore =
+    body.metadata_score != null ? String(body.metadata_score).trim() : null;
+  const forgeryScore =
+    body.forgery_score != null ? String(body.forgery_score).trim() : null;
+  const conclusion =
+    typeof body.conclusion === 'string' ? body.conclusion.trim() : null;
 
   if (!hash || !timestamp || latitude == null || longitude == null || accuracy == null) {
     sendJson(res, 400, {
@@ -103,6 +113,10 @@ module.exports = async function uploadHandler(req, res) {
           longitude: String(longitude),
           accuracy: String(accuracy),
           thumbnail_base64: thumbnailBase64 && thumbnailBase64.length > 0 ? thumbnailBase64 : null,
+          heatmap_base64: heatmapBase64 && heatmapBase64.length > 0 ? heatmapBase64 : null,
+          metadata_score: metadataScore && metadataScore.length > 0 ? metadataScore : null,
+          forgery_score: forgeryScore && forgeryScore.length > 0 ? forgeryScore : null,
+          conclusion: conclusion && conclusion.length > 0 ? conclusion : null,
         },
         { onConflict: 'hash' }
       )

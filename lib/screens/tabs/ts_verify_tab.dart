@@ -116,6 +116,10 @@ class _TsVerifyTabState extends State<TsVerifyTab> {
         thumbnailBase64: (cloudThumbnail != null && cloudThumbnail.isNotEmpty)
             ? cloudThumbnail
             : thumbnailBase64,
+        heatmapBase64: stamp['heatmap_base64']?.toString(),
+        metadataScore: stamp['metadata_score']?.toString(),
+        forgeryScore: stamp['forgery_score']?.toString(),
+        conclusion: stamp['conclusion']?.toString(),
       );
 
       if (!mounted) return;
@@ -129,6 +133,11 @@ class _TsVerifyTabState extends State<TsVerifyTab> {
             accuracy: record.accuracy,
             createdAt: record.createdAt,
             verifyUrl: record.verifyUrl,
+            detectorHeatmapImage: record.heatmapBase64,
+            metadataScore: int.tryParse(record.metadataScore ?? ''),
+            forgeryScore: int.tryParse(record.forgeryScore ?? ''),
+            detectorConclusion: record.conclusion,
+            isDetectorResult: (record.heatmapBase64 ?? '').isNotEmpty,
           ),
         ),
       );
@@ -155,8 +164,7 @@ class _TsVerifyTabState extends State<TsVerifyTab> {
 
   String _verificationUrlForHash(String hash) {
     return Uri.parse('$_backendBaseUrl/api/verify')
-        .replace(queryParameters: <String, String>{'hash': hash})
-        .toString();
+        .replace(queryParameters: <String, String>{'hash': hash}).toString();
   }
 
   Future<Map<String, dynamic>> _lookup(String hash) async {
@@ -205,6 +213,11 @@ class _TsVerifyTabState extends State<TsVerifyTab> {
           accuracy: record.accuracy,
           createdAt: record.createdAt,
           verifyUrl: record.verifyUrl,
+          detectorHeatmapImage: record.heatmapBase64,
+          metadataScore: int.tryParse(record.metadataScore ?? ''),
+          forgeryScore: int.tryParse(record.forgeryScore ?? ''),
+          detectorConclusion: record.conclusion,
+          isDetectorResult: (record.heatmapBase64 ?? '').isNotEmpty,
         ),
       ),
     );
@@ -257,7 +270,7 @@ class _TsVerifyTabState extends State<TsVerifyTab> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'TS 照片验证',
+                              'TruthStamp 照片验证',
                               style: theme.textTheme.titleLarge?.copyWith(
                                 fontWeight: FontWeight.w800,
                               ),
@@ -346,7 +359,8 @@ class _TsVerifyTabState extends State<TsVerifyTab> {
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(28),
                 ),
-                padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 24),
+                padding:
+                    const EdgeInsets.symmetric(vertical: 36, horizontal: 24),
                 child: Column(
                   children: [
                     Container(
@@ -371,7 +385,7 @@ class _TsVerifyTabState extends State<TsVerifyTab> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      '导入 TS 照片后，记录会出现在这里。',
+                      '导入 TruthStamp 照片后，记录会出现在这里。',
                       textAlign: TextAlign.center,
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
@@ -435,6 +449,16 @@ class _TsVerifyTabState extends State<TsVerifyTab> {
                                     color: theme.colorScheme.onSurfaceVariant,
                                   ),
                                 ),
+                                if ((record.conclusion ?? '').isNotEmpty) ...[
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    record.conclusion!,
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: const Color(0xFF2563EB),
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
                               ],
                             ),
                           ),

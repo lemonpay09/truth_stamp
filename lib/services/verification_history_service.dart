@@ -45,7 +45,8 @@ class VerificationHistoryService extends ChangeNotifier {
 
     return decoded
         .whereType<Map>()
-        .map((item) => VerificationRecord.fromJson(item.cast<String, dynamic>()))
+        .map(
+            (item) => VerificationRecord.fromJson(item.cast<String, dynamic>()))
         .where((record) => record.hash.isNotEmpty)
         .toList();
   }
@@ -57,7 +58,8 @@ class VerificationHistoryService extends ChangeNotifier {
 
   Future<void> saveRecords(List<VerificationRecord> records) async {
     final file = await _historyFile();
-    final payload = jsonEncode(records.map((record) => record.toJson()).toList());
+    final payload =
+        jsonEncode(records.map((record) => record.toJson()).toList());
     await file.writeAsString(payload, flush: true);
     notifyListeners();
   }
@@ -73,9 +75,14 @@ class VerificationHistoryService extends ChangeNotifier {
     required String verifyUrl,
     required String recordType,
     String? thumbnailBase64,
+    String? heatmapBase64,
+    String? metadataScore,
+    String? forgeryScore,
+    String? conclusion,
   }) async {
     if (!await sourceImage.exists()) {
-      throw ArgumentError.value(sourceImage.path, 'sourceImage', 'Image file not found.');
+      throw ArgumentError.value(
+          sourceImage.path, 'sourceImage', 'Image file not found.');
     }
 
     final copiedImage = await _copyImageToHistory(sourceImage, hash);
@@ -90,6 +97,10 @@ class VerificationHistoryService extends ChangeNotifier {
       imagePath: copiedImage.path,
       recordType: recordType,
       thumbnailBase64: thumbnailBase64,
+      heatmapBase64: heatmapBase64,
+      metadataScore: metadataScore,
+      forgeryScore: forgeryScore,
+      conclusion: conclusion,
     );
 
     final records = await loadRecords();
