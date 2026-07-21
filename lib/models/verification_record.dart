@@ -8,6 +8,8 @@ class VerificationRecord {
     required this.createdAt,
     required this.verifyUrl,
     required this.imagePath,
+    required this.recordType,
+    this.thumbnailBase64,
   });
 
   final String hash;
@@ -18,6 +20,8 @@ class VerificationRecord {
   final String createdAt;
   final String verifyUrl;
   final String imagePath;
+  final String recordType; // detect | verify
+  final String? thumbnailBase64;
 
   String get shortHash {
     if (hash.length <= 12) return hash;
@@ -34,6 +38,8 @@ class VerificationRecord {
       'createdAt': createdAt,
       'verifyUrl': verifyUrl,
       'imagePath': imagePath,
+      'recordType': recordType,
+      'thumbnailBase64': thumbnailBase64,
     };
   }
 
@@ -47,6 +53,8 @@ class VerificationRecord {
       createdAt: json['createdAt']?.toString() ?? '',
       verifyUrl: json['verifyUrl']?.toString() ?? '',
       imagePath: json['imagePath']?.toString() ?? '',
+      recordType: json['recordType']?.toString() ?? 'verify',
+      thumbnailBase64: json['thumbnailBase64']?.toString(),
     );
   }
 }

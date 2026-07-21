@@ -13,6 +13,7 @@ import '../verification_detail_screen.dart';
 import '../../services/crypto_service.dart';
 import '../../services/exif_service.dart';
 import '../../services/metadata_service.dart';
+import '../../services/thumbnail_service.dart';
 import '../../services/verification_history_service.dart';
 import '../../services/watermark_service.dart';
 
@@ -57,6 +58,7 @@ class _CameraTabState extends State<CameraTab> {
   final CryptoService _cryptoService = const CryptoService();
   final WatermarkService _watermarkService = const WatermarkService();
   final ExifService _exifService = const ExifService();
+  final ThumbnailService _thumbnailService = const ThumbnailService();
   final ImagePicker _imagePicker = ImagePicker();
   final http.Client _httpClient = http.Client();
 
@@ -116,11 +118,13 @@ class _CameraTabState extends State<CameraTab> {
         imageBytes: bytes,
         metadata: normalizedMetadata,
       );
+      final thumbnailBase64 =
+          await _thumbnailService.generateTinyThumbnailBase64(sourceImage);
       final verifyUrl = _verificationUrlForHash(hash);
 
       if (!mounted) return;
       setState(() => _progressMessage = '正在同步至云端...');
-      await _uploadStamp(hash, normalizedMetadata);
+      await _uploadStamp(hash, normalizedMetadata, thumbnailBase64);
 
       if (!mounted) return;
       setState(() => _progressMessage = '正在写入防伪信息...');
@@ -149,6 +153,8 @@ class _CameraTabState extends State<CameraTab> {
         accuracy: normalizedMetadata['accuracy']?.toString() ?? '-',
         createdAt: createdAt,
         verifyUrl: verifyUrl,
+        recordType: 'verify',
+        thumbnailBase64: thumbnailBase64,
       );
 
       final result = _CameraCaptureResult(
@@ -182,6 +188,7 @@ class _CameraTabState extends State<CameraTab> {
   Future<void> _uploadStamp(
     String hash,
     Map<String, dynamic> metadata,
+    String? thumbnailBase64,
   ) async {
     final response = await _httpClient
         .post(
@@ -195,6 +202,7 @@ class _CameraTabState extends State<CameraTab> {
             'latitude': metadata['latitude'],
             'longitude': metadata['longitude'],
             'accuracy': metadata['accuracy'],
+            'thumbnail_base64': thumbnailBase64,
           }),
         )
         .timeout(const Duration(seconds: 15));

@@ -50,6 +50,11 @@ class VerificationHistoryService extends ChangeNotifier {
         .toList();
   }
 
+  Future<List<VerificationRecord>> loadRecordsByType(String recordType) async {
+    final records = await loadRecords();
+    return records.where((record) => record.recordType == recordType).toList();
+  }
+
   Future<void> saveRecords(List<VerificationRecord> records) async {
     final file = await _historyFile();
     final payload = jsonEncode(records.map((record) => record.toJson()).toList());
@@ -66,6 +71,8 @@ class VerificationHistoryService extends ChangeNotifier {
     required String accuracy,
     required String createdAt,
     required String verifyUrl,
+    required String recordType,
+    String? thumbnailBase64,
   }) async {
     if (!await sourceImage.exists()) {
       throw ArgumentError.value(sourceImage.path, 'sourceImage', 'Image file not found.');
@@ -81,10 +88,14 @@ class VerificationHistoryService extends ChangeNotifier {
       createdAt: createdAt,
       verifyUrl: verifyUrl,
       imagePath: copiedImage.path,
+      recordType: recordType,
+      thumbnailBase64: thumbnailBase64,
     );
 
     final records = await loadRecords();
-    records.removeWhere((item) => item.hash == hash);
+    records.removeWhere(
+      (item) => item.hash == hash && item.recordType == recordType,
+    );
     records.insert(0, record);
     await saveRecords(records);
     return record;

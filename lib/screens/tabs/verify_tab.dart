@@ -1,11 +1,14 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../models/verification_record.dart';
+import '../../services/thumbnail_service.dart';
 import '../../services/verification_history_service.dart';
 import '../verification_detail_screen.dart';
 
@@ -25,6 +28,7 @@ class _VerifyTabState extends State<VerifyTab> {
   static const String _detectorApiUrl = 'http://192.168.3.107:8000/api/detect';
 
   final ImagePicker _imagePicker = ImagePicker();
+  final ThumbnailService _thumbnailService = const ThumbnailService();
   late final VoidCallback _historyListener;
 
   bool _isBusy = false;
@@ -35,9 +39,7 @@ class _VerifyTabState extends State<VerifyTab> {
   @override
   void initState() {
     super.initState();
-    _historyListener = () {
-      _reloadRecords();
-    };
+    _historyListener = _reloadRecords;
     _reloadRecords();
     widget.historyService.addListener(_historyListener);
   }
@@ -49,7 +51,7 @@ class _VerifyTabState extends State<VerifyTab> {
   }
 
   Future<void> _reloadRecords() async {
-    final records = await widget.historyService.loadRecords();
+    final records = await widget.historyService.loadRecordsByType('detect');
     if (!mounted) return;
     setState(() => _records = records);
   }
@@ -74,7 +76,23 @@ class _VerifyTabState extends State<VerifyTab> {
     });
 
     try {
+      final thumbnailBase64 =
+          await _thumbnailService.generateTinyThumbnailBase64(file);
       final result = await _detectWithDetector(file);
+      final now = DateTime.now();
+      final record = await widget.historyService.upsertRecord(
+        sourceImage: file,
+        hash: 'detect-${now.microsecondsSinceEpoch}',
+        timestamp: now.toString(),
+        latitude: '-',
+        longitude: '-',
+        accuracy: '-',
+        createdAt: now.toIso8601String(),
+        verifyUrl: '',
+        recordType: 'detect',
+        thumbnailBase64: thumbnailBase64,
+      );
+
       if (!mounted) return;
       await Navigator.of(context).push(
         MaterialPageRoute(
@@ -85,12 +103,12 @@ class _VerifyTabState extends State<VerifyTab> {
             forgeryScore: result.forgeryScore,
             detectorMessage: result.message,
             isForgery: result.isForgery,
-            hash: '-',
+            hash: record.hash,
             timestamp: '-',
             latitude: '-',
             longitude: '-',
             accuracy: '-',
-            createdAt: '-',
+            createdAt: record.createdAt,
             verifyUrl: '',
           ),
         ),
@@ -111,6 +129,11 @@ class _VerifyTabState extends State<VerifyTab> {
   Future<_DetectorResult> _detectWithDetector(File file) async {
     final request = http.MultipartRequest('POST', Uri.parse(_detectorApiUrl));
     request.headers['Accept'] = 'application/json';
+    final extension = _fileExtension(file.path);
+    final mediaType = extension == '.png'
+        ? MediaType('image', 'png')
+        : MediaType('image', 'jpeg');
+
     request.files.add(
       await http.MultipartFile.fromPath(
         'file',
@@ -118,6 +141,7 @@ class _VerifyTabState extends State<VerifyTab> {
         filename: file.uri.pathSegments.isNotEmpty
             ? file.uri.pathSegments.last
             : 'upload.jpg',
+        contentType: mediaType,
       ),
     );
 
@@ -136,9 +160,11 @@ class _VerifyTabState extends State<VerifyTab> {
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final detail = body['detail']?.toString();
-      throw StateError(detail ??
-          body['error']?.toString() ??
-          '检测接口异常（${response.statusCode}）');
+      throw StateError(
+        detail ??
+            body['error']?.toString() ??
+            '检测接口异常（${response.statusCode}）',
+      );
     }
 
     final heatmap = body['heatmap_image']?.toString() ?? '';
@@ -155,14 +181,19 @@ class _VerifyTabState extends State<VerifyTab> {
     );
   }
 
+  String _fileExtension(String path) {
+    final index = path.lastIndexOf('.');
+    if (index < 0) return '';
+    return path.substring(index).toLowerCase();
+  }
+
   int _asInt(dynamic value) {
     if (value is int) return value;
     if (value is num) return value.round();
     return int.tryParse(value?.toString() ?? '') ?? 0;
   }
 
-  Future<void> _openDetail(VerificationRecord record) async {
-    if (!mounted) return;
+  Future<void> _openHistoryDetail(VerificationRecord record) async {
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => VerificationDetailScreen(
@@ -173,13 +204,10 @@ class _VerifyTabState extends State<VerifyTab> {
           accuracy: record.accuracy,
           createdAt: record.createdAt,
           verifyUrl: record.verifyUrl,
+          isDetectorResult: true,
         ),
       ),
     );
-  }
-
-  Future<void> _openHistoryDetail(VerificationRecord record) async {
-    await _openDetail(record);
   }
 
   @override
@@ -229,7 +257,7 @@ class _VerifyTabState extends State<VerifyTab> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              '从相册导入图片并鉴别',
+                              '从相册导入图片并鉴伪',
                               style: theme.textTheme.titleLarge?.copyWith(
                                 fontWeight: FontWeight.w800,
                               ),
@@ -265,7 +293,7 @@ class _VerifyTabState extends State<VerifyTab> {
                       ),
                       onPressed: _isBusy ? null : _importAndVerify,
                       child: Text(
-                        _isBusy ? '取证中...' : '导入鉴别',
+                        _isBusy ? '取证中...' : '导入鉴伪',
                         style: const TextStyle(
                           color: Color(0xFF0F172A),
                           fontWeight: FontWeight.w800,
@@ -298,7 +326,7 @@ class _VerifyTabState extends State<VerifyTab> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  'History Logs',
+                  '历史记录',
                   style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w800,
                   ),
@@ -318,8 +346,7 @@ class _VerifyTabState extends State<VerifyTab> {
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(28),
                 ),
-                padding:
-                    const EdgeInsets.symmetric(vertical: 36, horizontal: 24),
+                padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 24),
                 child: Column(
                   children: [
                     Container(
@@ -337,14 +364,14 @@ class _VerifyTabState extends State<VerifyTab> {
                     ),
                     const SizedBox(height: 14),
                     Text(
-                      '暂无防伪记录',
+                      '暂无鉴伪记录',
                       style: theme.textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w700,
                       ),
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      '拍照同步成功后，历史记录会出现在这里。',
+                      '导入外来图片后，记录会出现在这里。',
                       textAlign: TextAlign.center,
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
@@ -401,19 +428,14 @@ class _VerifyTabState extends State<VerifyTab> {
                                     color: theme.colorScheme.onSurfaceVariant,
                                   ),
                                 ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  '${record.latitude}, ${record.longitude}',
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    color: theme.colorScheme.onSurfaceVariant,
-                                  ),
-                                ),
                               ],
                             ),
                           ),
                           const SizedBox(width: 8),
-                          const Icon(Icons.chevron_right_rounded,
-                              color: Color(0xFF9CA3AF)),
+                          const Icon(
+                            Icons.chevron_right_rounded,
+                            color: Color(0xFF9CA3AF),
+                          ),
                         ],
                       ),
                     ),
@@ -427,6 +449,14 @@ class _VerifyTabState extends State<VerifyTab> {
   }
 
   Widget _buildThumbnail(VerificationRecord record) {
+    final thumb = record.thumbnailBase64;
+    if (thumb != null && thumb.isNotEmpty) {
+      final bytes = _safeDecodeBase64(thumb);
+      if (bytes != null) {
+        return Image.memory(bytes, fit: BoxFit.cover);
+      }
+    }
+
     final file = File(record.imagePath);
     if (record.imagePath.isNotEmpty && file.existsSync()) {
       return Image.file(file, fit: BoxFit.cover);
@@ -435,6 +465,15 @@ class _VerifyTabState extends State<VerifyTab> {
       color: const Color(0xFFF3F4F6),
       child: const Icon(Icons.photo_rounded, color: Color(0xFF9CA3AF)),
     );
+  }
+
+  Uint8List? _safeDecodeBase64(String value) {
+    final normalized = value.contains(',') ? value.split(',').last : value;
+    try {
+      return base64Decode(normalized);
+    } on FormatException {
+      return null;
+    }
   }
 }
 

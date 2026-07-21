@@ -2,6 +2,7 @@ import asyncio
 import base64
 from dataclasses import dataclass
 from io import BytesIO
+from pathlib import Path
 from typing import Any
 
 import cv2
@@ -10,6 +11,13 @@ import piexif
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, UnidentifiedImageError
+
+try:
+    import pillow_heif
+
+    pillow_heif.register_heif_opener()
+except Exception:
+    pillow_heif = None
 
 
 app = FastAPI(title="Truth Stamp Detector", version="1.0.0")
@@ -189,6 +197,37 @@ def build_report_message(metadata_score: int, forgery_score: int, reasons: list[
     return f"当前样本未发现明显篡改痕迹。EXIF: {'；'.join(reasons[:2])}"
 
 
+def prepare_image_bytes_for_analysis(
+    image_bytes: bytes,
+    filename: str,
+    content_type: str,
+) -> tuple[bytes, str]:
+    extension = Path(filename or "").suffix.lower()
+    allowed_ext = {".jpg", ".jpeg", ".png", ".heic", ".heif"}
+
+    if extension and extension not in allowed_ext:
+        raise HTTPException(
+            status_code=400,
+            detail="仅支持 .jpg/.jpeg/.png/.heic/.heif 文件上传",
+        )
+
+    is_heif_type = "heic" in content_type or "heif" in content_type
+    is_heif_ext = extension in {".heic", ".heif"}
+    if is_heif_type or is_heif_ext:
+        try:
+            image = Image.open(BytesIO(image_bytes)).convert("RGB")
+            converted = BytesIO()
+            image.save(converted, format="JPEG", quality=96)
+            return converted.getvalue(), ".jpeg"
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="HEIC/HEIF 图片解析失败，请确认已安装 pillow-heif 或上传 JPEG/PNG。",
+            ) from exc
+
+    return image_bytes, extension
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -196,21 +235,24 @@ async def health() -> dict[str, str]:
 
 @app.post("/api/detect")
 async def detect_forgery(file: UploadFile = File(...)) -> dict[str, Any]:
-    allowed_mime_types = {"image/jpeg", "image/jpg", "image/png"}
     content_type = (file.content_type or "").lower()
-    if content_type not in allowed_mime_types:
-        raise HTTPException(
-            status_code=400,
-            detail="仅支持 JPEG/PNG 图片上传（image/jpeg, image/png）",
-        )
 
     image_bytes = await file.read()
     if not image_bytes:
         raise HTTPException(status_code=400, detail="上传文件为空")
 
     try:
-        metadata_task = asyncio.to_thread(analyze_exif_metadata, image_bytes)
-        ela_task = asyncio.to_thread(run_ela_and_edge_detection, image_bytes)
+        normalized_bytes, _ = prepare_image_bytes_for_analysis(
+            image_bytes=image_bytes,
+            filename=file.filename or "",
+            content_type=content_type,
+        )
+    except HTTPException:
+        raise
+
+    try:
+        metadata_task = asyncio.to_thread(analyze_exif_metadata, normalized_bytes)
+        ela_task = asyncio.to_thread(run_ela_and_edge_detection, normalized_bytes)
         metadata_result, ela_result = await asyncio.gather(metadata_task, ela_task)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

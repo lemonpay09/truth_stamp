@@ -79,6 +79,10 @@ module.exports = async function uploadHandler(req, res) {
   const latitude = body.latitude;
   const longitude = body.longitude;
   const accuracy = body.accuracy;
+  const thumbnailBase64 =
+    typeof body.thumbnail_base64 === 'string'
+      ? body.thumbnail_base64.trim()
+      : null;
 
   if (!hash || !timestamp || latitude == null || longitude == null || accuracy == null) {
     sendJson(res, 400, {
@@ -98,6 +102,7 @@ module.exports = async function uploadHandler(req, res) {
           latitude: String(latitude),
           longitude: String(longitude),
           accuracy: String(accuracy),
+          thumbnail_base64: thumbnailBase64 && thumbnailBase64.length > 0 ? thumbnailBase64 : null,
         },
         { onConflict: 'hash' }
       )
