@@ -6,4 +6,6 @@ pillow-heif
 piexif
 numpy
 tensorflow
+scikit-learn
+tqdm
 python-multipart
