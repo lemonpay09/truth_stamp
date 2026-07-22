@@ -220,21 +220,34 @@ class VerificationDetailScreen extends StatelessWidget {
       ),
       clipBehavior: Clip.antiAlias,
       child: AspectRatio(
-        aspectRatio: 1,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            if (sourceImagePath.isNotEmpty && sourceFile.existsSync())
-              Image.file(sourceFile, fit: BoxFit.cover)
-            else
-              const Center(
-                child: Text(
-                  '原始图像不可用',
-                  style: TextStyle(color: Colors.white70),
-                ),
-              ),
-            if (maskBytes != null) Image.memory(maskBytes, fit: BoxFit.cover),
-          ],
+        aspectRatio: 4 / 3,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                if (sourceImagePath.isNotEmpty && sourceFile.existsSync())
+                  Image.file(
+                    sourceFile,
+                    fit: BoxFit.contain,
+                    alignment: Alignment.center,
+                  )
+                else
+                  const Center(
+                    child: Text(
+                      '原始图像不可用',
+                      style: TextStyle(color: Colors.white70),
+                    ),
+                  ),
+                if (maskBytes != null)
+                  Image.memory(
+                    maskBytes,
+                    fit: BoxFit.contain,
+                    alignment: Alignment.center,
+                  ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -561,43 +574,45 @@ class _ElaFullScreenViewerState extends State<_ElaFullScreenViewer> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black.withOpacity(0.92),
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: GestureDetector(
-              onDoubleTap: _handleDoubleTap,
-              child: Center(
-                child: Hero(
-                  tag: widget.heroTag,
-                  child: InteractiveViewer(
-                    transformationController: _controller,
-                    minScale: 1.0,
-                    maxScale: 5.0,
-                    panEnabled: true,
-                    scaleEnabled: true,
-                    child: Image.memory(widget.bytes, fit: BoxFit.contain),
+      body: SafeArea(
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: GestureDetector(
+                onDoubleTap: _handleDoubleTap,
+                child: Center(
+                  child: Hero(
+                    tag: widget.heroTag,
+                    child: InteractiveViewer(
+                      transformationController: _controller,
+                      minScale: 1.0,
+                      maxScale: 5.0,
+                      panEnabled: true,
+                      scaleEnabled: true,
+                      child: Image.memory(widget.bytes, fit: BoxFit.contain),
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-          Positioned(
-            top: 54,
-            left: 16,
-            child: Material(
-              color: Colors.white.withOpacity(0.9),
-              borderRadius: BorderRadius.circular(20),
-              child: InkWell(
+            Positioned(
+              top: 12,
+              left: 16,
+              child: Material(
+                color: Colors.white.withOpacity(0.9),
                 borderRadius: BorderRadius.circular(20),
-                onTap: () => Navigator.of(context).pop(),
-                child: const Padding(
-                  padding: EdgeInsets.all(10),
-                  child: Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(20),
+                  onTap: () => Navigator.of(context).pop(),
+                  child: const Padding(
+                    padding: EdgeInsets.all(10),
+                    child: Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

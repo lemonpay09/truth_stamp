@@ -80,10 +80,12 @@ class _VerifyTabState extends State<VerifyTab> {
           await _thumbnailService.generateTinyThumbnailBase64(file);
       final result = await _detectWithDetector(file);
       final now = DateTime.now();
-      final conclusion = _buildConclusion(
-        metadataScore: result.metadataScore,
-        forgeryScore: result.forgeryScore,
-      );
+      final conclusion = result.conclusion.isNotEmpty
+          ? result.conclusion
+          : _buildConclusion(
+              metadataScore: result.metadataScore,
+              forgeryScore: result.forgeryScore,
+            );
       final record = await widget.historyService.upsertRecord(
         sourceImage: file,
         hash: 'detect-${now.microsecondsSinceEpoch}',
@@ -198,6 +200,7 @@ class _VerifyTabState extends State<VerifyTab> {
       heatmapImage: heatmap,
       maskImageBase64: maskImage,
       message: body['message']?.toString() ?? '取证完成',
+      conclusion: body['conclusion']?.toString() ?? details['conclusion']?.toString() ?? '',
     );
   }
 
@@ -537,6 +540,7 @@ class _DetectorResult {
     required this.heatmapImage,
     required this.maskImageBase64,
     required this.message,
+    required this.conclusion,
   });
 
   final bool isForgery;
@@ -546,4 +550,5 @@ class _DetectorResult {
   final String heatmapImage;
   final String maskImageBase64;
   final String message;
+  final String conclusion;
 }
