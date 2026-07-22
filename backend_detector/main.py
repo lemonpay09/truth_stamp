@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import math
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -156,12 +157,23 @@ def run_ela_and_edge_detection(image_bytes: bytes, quality: int = 95, enhance: f
     ela_gray = cv2.cvtColor(ela_enhanced, cv2.COLOR_RGB2GRAY)
     original_gray = cv2.cvtColor(original_rgb, cv2.COLOR_RGB2GRAY)
 
-    edges = cv2.Canny(ela_gray, threshold1=35, threshold2=120)
-    edge_energy = cv2.GaussianBlur(ela_gray.astype(np.float32), (5, 5), 0)
+    original_laplacian = cv2.convertScaleAbs(cv2.Laplacian(original_gray, cv2.CV_16S, ksize=3))
+    _, original_edge_mask = cv2.threshold(
+        original_laplacian, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )
+    suppress_kernel = np.ones((3, 3), np.uint8)
+    original_edge_mask = cv2.morphologyEx(
+        original_edge_mask, cv2.MORPH_CLOSE, suppress_kernel, iterations=1
+    )
+    original_edge_mask = cv2.dilate(original_edge_mask, suppress_kernel, iterations=1)
+    suppressed_gray = cv2.subtract(ela_gray, original_edge_mask)
+
+    edges = cv2.Canny(suppressed_gray, threshold1=35, threshold2=120)
+    edge_energy = cv2.GaussianBlur(suppressed_gray.astype(np.float32), (5, 5), 0)
     high_energy_threshold = float(np.percentile(edge_energy, 96))
     high_energy_mask = (edge_energy >= high_energy_threshold) & (edges > 0)
 
-    heatmap = cv2.applyColorMap(ela_gray, cv2.COLORMAP_TURBO)
+    heatmap = cv2.applyColorMap(suppressed_gray, cv2.COLORMAP_TURBO)
     heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
 
     # Neon highlights for suspicious edges
@@ -173,7 +185,7 @@ def run_ela_and_edge_detection(image_bytes: bytes, quality: int = 95, enhance: f
     edge_overlay[original_edges > 0] = [255, 255, 255]
     heatmap = cv2.addWeighted(heatmap, 0.92, edge_overlay, 0.08, 0)
 
-    ela_strength = float(np.mean(ela_gray) / 255.0 * 100.0)
+    ela_strength = float(np.mean(suppressed_gray) / 255.0 * 100.0)
     high_energy_ratio = float(np.count_nonzero(high_energy_mask) / high_energy_mask.size * 100.0)
     high_energy_score = min(100.0, high_energy_ratio * 10.0)
     forgery_score = int(round(min(100.0, 0.65 * ela_strength + 0.35 * high_energy_score)))
@@ -192,14 +204,14 @@ def run_ela_and_edge_detection(image_bytes: bytes, quality: int = 95, enhance: f
     binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
 
     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    min_area = max(20.0, float(original_rgb.shape[0] * original_rgb.shape[1]) * 0.00008)
+    min_area = 200.0
     valid_contours = [cnt for cnt in contours if cv2.contourArea(cnt) >= min_area]
 
     mask_rgba = np.zeros((original_rgb.shape[0], original_rgb.shape[1], 4), dtype=np.uint8)
     if valid_contours:
-        for contour in valid_contours:
-            x, y, w, h = cv2.boundingRect(contour)
-            cv2.rectangle(mask_rgba, (x, y), (x + w, y + h), color=(255, 0, 0, 102), thickness=cv2.FILLED)
+        mask_bgra = np.zeros_like(mask_rgba)
+        cv2.drawContours(mask_bgra, valid_contours, -1, color=(0, 0, 255, 102), thickness=cv2.FILLED)
+        mask_rgba = cv2.cvtColor(mask_bgra, cv2.COLOR_BGRA2RGBA)
 
     mask_output = BytesIO()
     Image.fromarray(mask_rgba, mode="RGBA").save(mask_output, format="PNG")
@@ -231,17 +243,17 @@ def calibrate_low_risk_scores(
         return ai_score_100, combined_score, "疑似局部修改"
 
     if metadata_score == 100 and ela_score < 30:
-        smooth = min(1.0, max(0.0, ela_score / 30.0))
+        smooth = (ela_score / 30.0) ** 1.5
         calibrated = int(round(3 + smooth * 9))
         calibrated = max(3, min(12, calibrated))
-        safe_score = min(calibrated, combined_score, ai_score_100)
+        safe_score = calibrated
         return safe_score, safe_score, "安全 (未见篡改)"
 
     if metadata_score == 55 and ela_score < 25:
-        smooth = min(1.0, max(0.0, ela_score / 25.0))
-        calibrated = int(round(10 + smooth * 10))
-        calibrated = max(10, min(20, calibrated))
-        safe_score = min(calibrated, combined_score, ai_score_100)
+        smooth = (ela_score / 25.0) ** 1.5
+        calibrated = int(round(10 + smooth * 8))
+        calibrated = max(10, min(18, calibrated))
+        safe_score = calibrated
         return safe_score, safe_score, "安全 (未见篡改的平面截图)"
 
     if ela_score >= 25:

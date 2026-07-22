@@ -115,7 +115,7 @@ class VerificationDetailScreen extends StatelessWidget {
     const heroTag = 'ela-fullscreen-view';
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
         Container(
           decoration: BoxDecoration(
@@ -134,12 +134,12 @@ class VerificationDetailScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                '物理级像素误差分析报告',
+                '时空真实性报告',
                 style: theme.textTheme.titleLarge?.copyWith(
                   fontWeight: FontWeight.w800,
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
               Text(
                 detectorMessage ?? '算法取证完成',
                 style: theme.textTheme.bodyMedium?.copyWith(
