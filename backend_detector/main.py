@@ -46,6 +46,7 @@ class MetadataResult:
 class ElaResult:
     score: int
     heatmap_b64: str
+    mask_b64: str
     details: dict[str, Any]
 
 
@@ -182,16 +183,63 @@ def run_ela_and_edge_detection(image_bytes: bytes, quality: int = 95, enhance: f
     heatmap_image.save(output, format="PNG")
     heatmap_b64 = base64.b64encode(output.getvalue()).decode("utf-8")
 
+    # Tactical Action 2: pixel-level tamper mask overlay (RGBA, red @40% alpha).
+    diff_gray = cv2.cvtColor(ela_rgb, cv2.COLOR_RGB2GRAY)
+    blur = cv2.GaussianBlur(diff_gray, (5, 5), 0)
+    _, thresh_otsu = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    _, thresh_floor = cv2.threshold(blur, 18, 255, cv2.THRESH_BINARY)
+    binary = cv2.bitwise_and(thresh_otsu, thresh_floor)
+    kernel = np.ones((3, 3), np.uint8)
+    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
+    binary = cv2.morphologyEx(binary, cv2.MORPH_DILATE, kernel, iterations=1)
+
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    min_area = max(20.0, float(original_rgb.shape[0] * original_rgb.shape[1]) * 0.00008)
+    valid_contours = [cnt for cnt in contours if cv2.contourArea(cnt) >= min_area]
+
+    mask_rgba = np.zeros((original_rgb.shape[0], original_rgb.shape[1], 4), dtype=np.uint8)
+    if valid_contours:
+        overlay = np.zeros_like(original_rgb, dtype=np.uint8)
+        cv2.drawContours(overlay, valid_contours, -1, color=(255, 0, 0), thickness=cv2.FILLED)
+        red_pixels = overlay[:, :, 0] > 0
+        mask_rgba[red_pixels, 0] = 255
+        mask_rgba[red_pixels, 3] = 102  # 40% alpha
+
+    mask_output = BytesIO()
+    Image.fromarray(mask_rgba, mode="RGBA").save(mask_output, format="PNG")
+    mask_b64 = base64.b64encode(mask_output.getvalue()).decode("utf-8")
+
     return ElaResult(
         score=forgery_score,
         heatmap_b64=heatmap_b64,
+        mask_b64=mask_b64,
         details={
             "ela_strength": round(ela_strength, 2),
             "high_energy_ratio": round(high_energy_ratio, 2),
             "enhance_factor": enhance,
             "jpeg_quality": quality,
+            "tamper_contours": len(valid_contours),
         },
     )
+
+
+def calibrate_low_risk_scores(
+    metadata_score: int,
+    ai_score_100: int,
+    combined_score: int,
+    ela_strength: float,
+    high_energy_ratio: float,
+) -> tuple[int, int]:
+    # Tactical Action 1: suppress false positives for clean camera originals.
+    is_clean_exif = metadata_score >= 100
+    is_low_ela = ela_strength <= 8.0 and high_energy_ratio <= 0.2
+    if not (is_clean_exif and is_low_ela):
+        return ai_score_100, combined_score
+
+    smooth_anchor = min(1.0, max(0.0, (ela_strength / 8.0) * 0.7 + (high_energy_ratio / 0.2) * 0.3))
+    calibrated = int(round(5 + smooth_anchor * 7))
+    calibrated = max(5, min(12, calibrated))
+    return min(ai_score_100, calibrated), min(combined_score, calibrated)
 
 
 def build_report_message(metadata_score: int, forgery_score: int, reasons: list[str]) -> str:
@@ -268,15 +316,19 @@ async def detect_forgery(file: UploadFile = File(...)) -> dict[str, Any]:
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"检测失败: {exc}") from exc
     
-    # 多模态融合：ELA (65%) + AI (35%)
-    # AI 分数是 0.0~1.0，转换为 0~100
     ai_score_100 = int(round(ai_score_float * 100))
-    
-    # 融合后的最终篡改分数
     final_forgery_score = int(round(0.65 * ela_result.score + 0.35 * ai_score_100))
+    ela_strength = float(ela_result.details.get("ela_strength", 0.0))
+    high_energy_ratio = float(ela_result.details.get("high_energy_ratio", 0.0))
+    ai_score_100, final_forgery_score = calibrate_low_risk_scores(
+        metadata_score=metadata_result.score,
+        ai_score_100=ai_score_100,
+        combined_score=final_forgery_score,
+        ela_strength=ela_strength,
+        high_energy_ratio=high_energy_ratio,
+    )
     is_forgery = final_forgery_score >= 60
-    
-    # 根据融合分数重新生成报告信息
+
     message = build_report_message(metadata_result.score, final_forgery_score, metadata_result.reasons)
 
     return {
@@ -284,11 +336,13 @@ async def detect_forgery(file: UploadFile = File(...)) -> dict[str, Any]:
         "metadata_score": metadata_result.score,
         "forgery_score": final_forgery_score,
         "heatmap_image": ela_result.heatmap_b64,
+        "mask_image_base64": ela_result.mask_b64,
         "message": message,
         "details": {
             "ela_score": ela_result.score,
             "ai_score": ai_score_100,
             "combined_risk_score": final_forgery_score,
+            "mask_image_base64": ela_result.mask_b64,
             "metadata_reasons": metadata_result.reasons,
             "ela": ela_result.details,
             "filename": file.filename,

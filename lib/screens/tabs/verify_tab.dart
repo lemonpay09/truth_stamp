@@ -96,6 +96,7 @@ class _VerifyTabState extends State<VerifyTab> {
         recordType: 'detect',
         thumbnailBase64: thumbnailBase64,
         heatmapBase64: result.heatmapImage,
+        maskBase64: result.maskImageBase64,
         metadataScore: result.metadataScore.toString(),
         forgeryScore: result.forgeryScore.toString(),
         conclusion: conclusion,
@@ -108,6 +109,8 @@ class _VerifyTabState extends State<VerifyTab> {
           builder: (_) => VerificationDetailScreen(
             isDetectorResult: true,
             detectorHeatmapImage: result.heatmapImage,
+            detectorMaskImage: result.maskImageBase64,
+            sourceImagePath: record.imagePath,
             metadataScore: result.metadataScore,
             aiScore: result.aiScore,
             forgeryScore: result.forgeryScore,
@@ -183,6 +186,9 @@ class _VerifyTabState extends State<VerifyTab> {
 
     final details = body['details'] as Map<String, dynamic>? ?? <String, dynamic>{};
     final aiScore = _asInt(details['ai_score']);
+    final maskImage = body['mask_image_base64']?.toString() ??
+        details['mask_image_base64']?.toString() ??
+        '';
 
     return _DetectorResult(
       isForgery: body['is_forgery'] == true,
@@ -190,6 +196,7 @@ class _VerifyTabState extends State<VerifyTab> {
       forgeryScore: _asInt(body['forgery_score']),
       aiScore: aiScore,
       heatmapImage: heatmap,
+      maskImageBase64: maskImage,
       message: body['message']?.toString() ?? '取证完成',
     );
   }
@@ -232,6 +239,8 @@ class _VerifyTabState extends State<VerifyTab> {
           verifyUrl: record.verifyUrl,
           isDetectorResult: true,
           detectorHeatmapImage: record.heatmapBase64,
+          detectorMaskImage: record.maskBase64,
+          sourceImagePath: record.imagePath,
           metadataScore: int.tryParse(record.metadataScore ?? ''),
           aiScore: int.tryParse(record.aiScore ?? ''),
           forgeryScore: int.tryParse(record.forgeryScore ?? ''),
@@ -526,6 +535,7 @@ class _DetectorResult {
     required this.forgeryScore,
     required this.aiScore,
     required this.heatmapImage,
+    required this.maskImageBase64,
     required this.message,
   });
 
@@ -534,5 +544,6 @@ class _DetectorResult {
   final int forgeryScore;
   final int aiScore;
   final String heatmapImage;
+  final String maskImageBase64;
   final String message;
 }

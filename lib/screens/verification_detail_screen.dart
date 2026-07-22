@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -14,8 +15,10 @@ class VerificationDetailScreen extends StatelessWidget {
     this.accuracy = '',
     this.createdAt = '',
     this.verifyUrl = '',
+    this.sourceImagePath = '',
     this.isDetectorResult = false,
     this.detectorHeatmapImage,
+    this.detectorMaskImage,
     this.metadataScore,
     this.aiScore,
     this.forgeryScore,
@@ -31,9 +34,11 @@ class VerificationDetailScreen extends StatelessWidget {
   final String accuracy;
   final String createdAt;
   final String verifyUrl;
+  final String sourceImagePath;
 
   final bool isDetectorResult;
   final String? detectorHeatmapImage;
+  final String? detectorMaskImage;
   final int? metadataScore;
   final int? aiScore;
   final int? forgeryScore;
@@ -49,11 +54,9 @@ class VerificationDetailScreen extends StatelessWidget {
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
-  Uint8List? _decodeHeatmapBytes() {
-    final base64Image = detectorHeatmapImage;
-    if (base64Image == null || base64Image.isEmpty) return null;
-    final normalized =
-        base64Image.contains(',') ? base64Image.split(',').last : base64Image;
+  Uint8List? _decodeBase64(String? value) {
+    if (value == null || value.isEmpty) return null;
+    final normalized = value.contains(',') ? value.split(',').last : value;
     try {
       return base64Decode(normalized);
     } on FormatException {
@@ -71,12 +74,8 @@ class VerificationDetailScreen extends StatelessWidget {
     if (detectorConclusion != null && detectorConclusion!.trim().isNotEmpty) {
       return detectorConclusion!.trim();
     }
-    if (physical >= 80 || metadata <= 35) {
-      return '高度伪造风险';
-    }
-    if (physical >= 55 || metadata <= 60) {
-      return '疑似局部修改';
-    }
+    if (physical >= 80 || metadata <= 35) return '高度伪造风险';
+    if (physical >= 55 || metadata <= 60) return '疑似局部修改';
     return '安全 (未见篡改)';
   }
 
@@ -100,18 +99,20 @@ class VerificationDetailScreen extends StatelessWidget {
       ),
       body: SafeArea(
         child: isDetectorResult
-            ? _buildDetectorResult(theme)
-            : _buildCloudResult(theme),
+            ? _buildDetectorResult(context, theme)
+            : _buildCloudResult(context, theme),
       ),
     );
   }
 
-  Widget _buildDetectorResult(ThemeData theme) {
-    final heatmapBytes = _decodeHeatmapBytes();
+  Widget _buildDetectorResult(BuildContext context, ThemeData theme) {
+    final heatmapBytes = _decodeBase64(detectorHeatmapImage);
+    final maskBytes = _decodeBase64(detectorMaskImage);
     final metadata = metadataScore ?? 0;
     final physical = forgeryScore ?? 0;
     final conclusionText = _resolveConclusionText(metadata, physical);
     final conclusionColor = _conclusionColor(conclusionText);
+    const heroTag = 'ela-fullscreen-view';
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
@@ -146,27 +147,17 @@ class VerificationDetailScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 16),
-              Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(22),
-                  color: const Color(0xFF0F172A),
+              _buildOverlayPreview(maskBytes),
+              const SizedBox(height: 14),
+              if (heatmapBytes != null)
+                Hero(
+                  tag: heroTag,
+                  child: _elaOpenButton(
+                    context: context,
+                    bytes: heatmapBytes,
+                    heroTag: heroTag,
+                  ),
                 ),
-                clipBehavior: Clip.antiAlias,
-                child: AspectRatio(
-                  aspectRatio: 1,
-                  child: heatmapBytes == null
-                      ? const Center(
-                          child: Text(
-                            '未获取到热力图',
-                            style: TextStyle(color: Colors.white70),
-                          ),
-                        )
-                      : Image.memory(
-                          heatmapBytes,
-                          fit: BoxFit.cover,
-                        ),
-                ),
-              ),
             ],
           ),
         ),
@@ -220,9 +211,73 @@ class VerificationDetailScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildCloudResult(ThemeData theme) {
+  Widget _buildOverlayPreview(Uint8List? maskBytes) {
+    final sourceFile = File(sourceImagePath);
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        color: const Color(0xFF0F172A),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: AspectRatio(
+        aspectRatio: 1,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (sourceImagePath.isNotEmpty && sourceFile.existsSync())
+              Image.file(sourceFile, fit: BoxFit.cover)
+            else
+              const Center(
+                child: Text(
+                  '原始图像不可用',
+                  style: TextStyle(color: Colors.white70),
+                ),
+              ),
+            if (maskBytes != null) Image.memory(maskBytes, fit: BoxFit.cover),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _elaOpenButton({
+    required BuildContext context,
+    required Uint8List bytes,
+    required String heroTag,
+  }) {
+    return FilledButton(
+      style: FilledButton.styleFrom(
+        backgroundColor: const Color(0xFF0F172A),
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 18),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+      ),
+      onPressed: () {
+        Navigator.of(context).push(
+          PageRouteBuilder<void>(
+            transitionDuration: const Duration(milliseconds: 280),
+            pageBuilder: (_, animation, __) => FadeTransition(
+              opacity: animation,
+              child: _ElaFullScreenViewer(
+                bytes: bytes,
+                heroTag: heroTag,
+              ),
+            ),
+          ),
+        );
+      },
+      child: const Text(
+        '查看物理像素残差（ELA热力图）',
+        style: TextStyle(fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+
+  Widget _buildCloudResult(BuildContext context, ThemeData theme) {
     final surface = theme.colorScheme.surface;
     final muted = theme.colorScheme.onSurfaceVariant;
+    final heatmapBytes = _decodeBase64(detectorHeatmapImage);
+    const heroTag = 'ela-fullscreen-view-cloud';
 
     Widget detailTile(String title, String value) {
       return Container(
@@ -353,8 +408,7 @@ class VerificationDetailScreen extends StatelessWidget {
                     children: [
                       Text(
                         '哈希指纹',
-                        style:
-                            theme.textTheme.labelLarge?.copyWith(color: muted),
+                        style: theme.textTheme.labelLarge?.copyWith(color: muted),
                       ),
                       const SizedBox(height: 8),
                       SelectableText(
@@ -366,6 +420,17 @@ class VerificationDetailScreen extends StatelessWidget {
                     ],
                   ),
                 ),
+                if (heatmapBytes != null) ...[
+                  const SizedBox(height: 14),
+                  Hero(
+                    tag: heroTag,
+                    child: _elaOpenButton(
+                      context: context,
+                      bytes: heatmapBytes,
+                      heroTag: heroTag,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -399,11 +464,6 @@ class VerificationDetailScreen extends StatelessWidget {
                 style: TextStyle(fontWeight: FontWeight.w700),
               ),
             ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            '验证 URL：$verifyUrl',
-            style: theme.textTheme.bodySmall?.copyWith(color: muted),
           ),
         ],
       ),
@@ -458,6 +518,83 @@ class VerificationDetailScreen extends StatelessWidget {
                     ),
                   ),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ElaFullScreenViewer extends StatefulWidget {
+  const _ElaFullScreenViewer({
+    required this.bytes,
+    required this.heroTag,
+  });
+
+  final Uint8List bytes;
+  final String heroTag;
+
+  @override
+  State<_ElaFullScreenViewer> createState() => _ElaFullScreenViewerState();
+}
+
+class _ElaFullScreenViewerState extends State<_ElaFullScreenViewer> {
+  final TransformationController _controller = TransformationController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _handleDoubleTap() {
+    final current = _controller.value.getMaxScaleOnAxis();
+    if (current > 1.2) {
+      _controller.value = Matrix4.identity();
+    } else {
+      _controller.value = Matrix4.identity()..scale(2.5);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black.withOpacity(0.92),
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: GestureDetector(
+              onDoubleTap: _handleDoubleTap,
+              child: Center(
+                child: Hero(
+                  tag: widget.heroTag,
+                  child: InteractiveViewer(
+                    transformationController: _controller,
+                    minScale: 1.0,
+                    maxScale: 5.0,
+                    panEnabled: true,
+                    scaleEnabled: true,
+                    child: Image.memory(widget.bytes, fit: BoxFit.contain),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            top: 54,
+            left: 16,
+            child: Material(
+              color: Colors.white.withOpacity(0.9),
+              borderRadius: BorderRadius.circular(20),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(20),
+                onTap: () => Navigator.of(context).pop(),
+                child: const Padding(
+                  padding: EdgeInsets.all(10),
+                  child: Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+                ),
+              ),
             ),
           ),
         ],

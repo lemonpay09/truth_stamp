@@ -117,7 +117,9 @@ class _TsVerifyTabState extends State<TsVerifyTab> {
             ? cloudThumbnail
             : thumbnailBase64,
         heatmapBase64: stamp['heatmap_base64']?.toString(),
+        maskBase64: stamp['mask_image_base64']?.toString(),
         metadataScore: stamp['metadata_score']?.toString(),
+        aiScore: stamp['ai_score']?.toString(),
         forgeryScore: stamp['forgery_score']?.toString(),
         conclusion: stamp['conclusion']?.toString(),
       );
@@ -134,6 +136,8 @@ class _TsVerifyTabState extends State<TsVerifyTab> {
             createdAt: record.createdAt,
             verifyUrl: record.verifyUrl,
             detectorHeatmapImage: record.heatmapBase64,
+            detectorMaskImage: record.maskBase64,
+            sourceImagePath: record.imagePath,
             metadataScore: int.tryParse(record.metadataScore ?? ''),
             aiScore: int.tryParse(record.aiScore ?? ''),
             forgeryScore: int.tryParse(record.forgeryScore ?? ''),
@@ -215,6 +219,8 @@ class _TsVerifyTabState extends State<TsVerifyTab> {
           createdAt: record.createdAt,
           verifyUrl: record.verifyUrl,
           detectorHeatmapImage: record.heatmapBase64,
+          detectorMaskImage: record.maskBase64,
+          sourceImagePath: record.imagePath,
           metadataScore: int.tryParse(record.metadataScore ?? ''),
           aiScore: int.tryParse(record.aiScore ?? ''),
           forgeryScore: int.tryParse(record.forgeryScore ?? ''),

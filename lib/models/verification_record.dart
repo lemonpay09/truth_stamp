@@ -11,6 +11,7 @@ class VerificationRecord {
     required this.recordType,
     this.thumbnailBase64,
     this.heatmapBase64,
+    this.maskBase64,
     this.metadataScore,
     this.aiScore,
     this.forgeryScore,
@@ -28,6 +29,7 @@ class VerificationRecord {
   final String recordType; // detect | verify
   final String? thumbnailBase64;
   final String? heatmapBase64;
+  final String? maskBase64;
   final String? metadataScore;
   final String? aiScore;
   final String? forgeryScore;
@@ -51,6 +53,7 @@ class VerificationRecord {
       'recordType': recordType,
       'thumbnailBase64': thumbnailBase64,
       'heatmapBase64': heatmapBase64,
+      'maskBase64': maskBase64,
       'metadataScore': metadataScore,
       'aiScore': aiScore,
       'forgeryScore': forgeryScore,
@@ -71,6 +74,7 @@ class VerificationRecord {
       recordType: json['recordType']?.toString() ?? 'verify',
       thumbnailBase64: json['thumbnailBase64']?.toString(),
       heatmapBase64: json['heatmapBase64']?.toString(),
+      maskBase64: json['maskBase64']?.toString(),
       metadataScore: json['metadataScore']?.toString(),
       aiScore: json['aiScore']?.toString(),
       forgeryScore: json['forgeryScore']?.toString(),
