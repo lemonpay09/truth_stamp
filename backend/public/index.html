@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -15,282 +15,342 @@
       tailwind.config = {
         theme: {
           extend: {
-            fontFamily: {
-              inter: ["Inter", "sans-serif"],
+            fontFamily: { inter: ["Inter", "sans-serif"] },
+            colors: {
+              bg: "#0A0E14",
+              card: "#1B2027",
+              textmain: "#FFFFFF",
+              textsub: "#9CA3AF",
+              accent: "#2F7BED",
             },
           },
         },
       };
     </script>
   </head>
-  <body class="min-h-screen bg-[#030508] font-inter text-white antialiased">
+  <body class="min-h-screen bg-bg font-inter text-textmain antialiased">
     <div class="pointer-events-none fixed inset-0 -z-10">
-      <div class="absolute left-1/2 top-[-8rem] h-72 w-72 -translate-x-1/2 rounded-full bg-[#2563EB]/25 blur-3xl"></div>
-      <div class="absolute bottom-[-10rem] right-[-10rem] h-80 w-80 rounded-full bg-[#1D4ED8]/15 blur-3xl"></div>
+      <div class="absolute left-1/2 top-[-6rem] h-72 w-72 -translate-x-1/2 rounded-full bg-accent/20 blur-3xl"></div>
     </div>
 
     <header class="mx-auto w-full max-w-7xl px-5 py-5 md:px-8">
-      <nav class="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3 backdrop-blur-xl md:px-6">
+      <nav class="flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.02] px-4 py-3 md:px-6">
         <a href="#" class="flex items-center gap-2">
-          <span class="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-[#2563EB] to-[#1D4ED8]">
+          <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-accent">
             <svg viewBox="0 0 24 24" class="h-5 w-5 text-white" fill="currentColor" aria-hidden="true">
-              <path d="M12 2 4 5v6c0 5 3.4 9.4 8 10.7 4.6-1.3 8-5.7 8-10.7V5l-8-3Zm0 5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z" />
+              <path d="M12 2 4 5v6c0 5 3.4 9.4 8 10.7 4.6-1.3 8-5.7 8-10.7V5l-8-3Z" />
             </svg>
           </span>
           <span class="text-lg font-semibold tracking-tight">TruthStamp</span>
         </a>
-        <div class="hidden items-center gap-7 text-sm text-[#9CA3AF] md:flex">
-          <a href="#" class="hover:text-white">技术白皮书</a>
-          <a href="#" class="hover:text-white">发展路线图</a>
-          <a
-            href="/admin"
-            class="rounded-xl border border-[#2563EB]/50 bg-[#1D4ED8]/15 px-4 py-2 font-medium text-white transition hover:bg-[#1D4ED8]/25"
-            >进入管理后台</a
-          >
+        <div class="flex items-center gap-3">
+          <div class="hidden items-center gap-3 md:flex">
+            <button
+              class="rounded-lg border border-white/10 bg-card px-3 py-2 text-sm text-textsub hover:text-white"
+              data-i18n="nav_docs"
+            >
+              Product Docs ▾
+            </button>
+            <button
+              class="rounded-lg border border-white/10 bg-card px-3 py-2 text-sm text-textsub hover:text-white"
+              data-i18n="nav_developers"
+            >
+              Developers ▾
+            </button>
+          </div>
+          <div class="relative">
+            <button
+              id="language-toggle"
+              type="button"
+              class="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-card px-3 py-2 text-sm text-textsub shadow-[0_4px_14px_rgba(0,0,0,0.25)] transition hover:text-white"
+            >
+              <span>🌐</span>
+              <span id="current-language-label">English</span>
+            </button>
+            <div
+              id="language-menu"
+              class="absolute right-0 top-12 z-20 hidden min-w-[180px] overflow-hidden rounded-lg border border-white/10 bg-card p-1 shadow-xl"
+            >
+              <button
+                type="button"
+                class="block w-full rounded-md px-3 py-2 text-left text-sm text-textsub transition hover:bg-accent hover:text-white"
+                data-language-option="en"
+              >
+                English
+              </button>
+              <button
+                type="button"
+                class="block w-full rounded-md px-3 py-2 text-left text-sm text-textsub transition hover:bg-accent hover:text-white"
+                data-language-option="zh"
+              >
+                中文 (简体)
+              </button>
+              <button
+                type="button"
+                class="block w-full rounded-md px-3 py-2 text-left text-sm text-textsub transition hover:bg-accent hover:text-white"
+                data-language-option="fr"
+              >
+                Français
+              </button>
+              <button
+                type="button"
+                class="block w-full rounded-md px-3 py-2 text-left text-sm text-textsub transition hover:bg-accent hover:text-white"
+                data-language-option="ru"
+              >
+                Русский
+              </button>
+            </div>
+          </div>
         </div>
       </nav>
     </header>
 
     <main class="mx-auto w-full max-w-7xl px-5 pb-20 md:px-8">
-      <section class="pt-10 md:pt-16">
-        <div class="max-w-4xl">
-          <p class="text-sm font-medium uppercase tracking-[0.22em] text-[#2563EB]">Reality Infrastructure</p>
-          <h1 class="mt-5 text-4xl font-extrabold leading-tight md:text-6xl">
-            Secure Reality.
-            <br />
-            Lock Space &amp; Time.
-          </h1>
-          <h2 class="mt-5 text-xl font-semibold text-white md:text-2xl">时空物理确权，捍卫数字世界的真实底座。</h2>
-          <p class="mt-6 max-w-3xl text-base leading-7 text-[#9CA3AF] md:text-lg">
-            TruthStamp 是一个将“主动物理相机确权”与“被动像素级 AI 取证”融为一体的真实性资产网络，重塑 AI 时代的信息互信。
-          </p>
-          <div class="mt-9 flex flex-wrap gap-4">
-            <a
-              href="#sandbox"
-              class="rounded-xl bg-[#2563EB] px-6 py-3 text-sm font-semibold text-white shadow-[0_0_30px_rgba(37,99,235,0.45)] transition hover:bg-[#1D4ED8]"
-              >进入鉴伪沙盒</a
-            >
-            <a
-              href="#"
-              class="rounded-xl border border-white/20 bg-white/5 px-6 py-3 text-sm font-semibold text-white transition hover:border-[#2563EB]/60"
-              >下载手机 App</a
-            >
-          </div>
-        </div>
-      </section>
-
-      <section class="mt-16 grid gap-5 md:mt-20 md:grid-cols-3">
-        <article class="rounded-xl border border-white/10 bg-[#111827]/85 p-6">
-          <p class="text-4xl font-extrabold text-[#2563EB]">100%</p>
-          <h3 class="mt-3 text-lg font-semibold">时空绝对因果 (True Causality)</h3>
-          <p class="mt-2 text-sm leading-6 text-[#9CA3AF]">基于手机硬件安全芯片(SE)与 GPS 卫星时空多维数据混合锁定</p>
-        </article>
-        <article class="rounded-xl border border-white/10 bg-[#111827]/85 p-6">
-          <p class="text-4xl font-extrabold text-[#2563EB]">0%</p>
-          <h3 class="mt-3 text-lg font-semibold">假阳性误报率 (False Positives)</h3>
-          <p class="mt-2 text-sm leading-6 text-[#9CA3AF]">通过物理元数据加权门限自适应算法，100% 保护真实照片免受误伤</p>
-        </article>
-        <article class="rounded-xl border border-white/10 bg-[#111827]/85 p-6">
-          <p class="text-4xl font-extrabold text-[#2563EB]">97.4%</p>
-          <h3 class="mt-3 text-lg font-semibold">AIGC 特征提取率</h3>
-          <p class="mt-2 text-sm leading-6 text-[#9CA3AF]">自主研发 IFAKE 卷积神经网络，捕获图像频域级微观生成痕迹</p>
-        </article>
-      </section>
-
-      <section id="sandbox" class="mt-10 md:mt-14">
-        <div class="rounded-xl border border-white/10 bg-[#0B0F19] p-5 md:p-6">
-          <div
-            id="dropZone"
-            class="relative rounded-xl border border-dashed border-[#2563EB]/80 bg-[#0A0F1C] p-8 text-center transition md:p-12"
+      <section class="pt-12 text-center md:pt-16">
+        <h1 class="mx-auto max-w-4xl text-4xl font-extrabold leading-tight md:text-6xl" data-i18n="hero_title">
+          Secure Reality. Lock Space &amp; Time.
+        </h1>
+        <p class="mx-auto mt-6 max-w-3xl text-base leading-7 text-textsub md:text-lg" data-i18n="hero_subtitle">
+          TruthStamp unifies hardware-grade spacetime attestation with neural residual forensics to build a verifiable, traceable, and auditable trust substrate for the AI era.
+        </p>
+        <div class="mt-9">
+          <a
+            href="#"
+            class="inline-flex rounded-lg bg-accent px-8 py-3 text-sm font-semibold text-white shadow-[0_0_30px_rgba(47,123,237,0.35)] transition hover:translate-y-[-1px] hover:bg-[#2A70D8]"
+            data-i18n="hero_cta"
           >
-            <input id="fileInput" type="file" accept="image/*" class="hidden" />
-            <div id="idleState">
-              <p class="text-lg font-semibold">拖拽任意图片至此，或点击本地上传</p>
-              <p class="mt-2 text-sm text-[#9CA3AF]">即刻验证时空真实性与 AI 篡改残差</p>
-              <button
-                id="pickBtn"
-                type="button"
-                class="mt-5 rounded-xl border border-[#2563EB]/60 bg-[#1D4ED8]/20 px-5 py-2 text-sm font-semibold text-white hover:bg-[#1D4ED8]/30"
-              >
-                选择图片
-              </button>
-            </div>
-
-            <div id="loadingState" class="hidden">
-              <div class="mx-auto h-64 max-w-2xl overflow-hidden rounded-xl border border-white/10 bg-black/40">
-                <div class="relative h-full w-full">
-                  <img id="scanPreview" alt="scan preview" class="h-full w-full object-contain opacity-80" />
-                  <div class="scan-line absolute left-0 top-0 h-1.5 w-full bg-gradient-to-r from-transparent via-[#60A5FA] to-transparent shadow-[0_0_20px_rgba(96,165,250,0.8)]"></div>
-                </div>
-              </div>
-              <p class="mt-4 text-sm text-[#9CA3AF]">正在进行物理级像素重压缩层级分析...</p>
-            </div>
-
-            <div id="resultState" class="hidden text-left">
-              <div class="grid gap-4 md:grid-cols-2">
-                <div class="rounded-xl border border-white/10 bg-black/30 p-3">
-                  <p class="mb-2 text-xs uppercase tracking-wider text-[#9CA3AF]">原始图片</p>
-                  <img id="originalResult" alt="original" class="h-72 w-full rounded-xl object-contain bg-black/50" />
-                </div>
-                <div class="rounded-xl border border-white/10 bg-black/30 p-3">
-                  <p class="mb-2 text-xs uppercase tracking-wider text-[#9CA3AF]">ELA 热力图</p>
-                  <img id="heatmapResult" alt="heatmap" class="h-72 w-full rounded-xl object-contain bg-black/50" />
-                </div>
-              </div>
-              <div class="mt-4 grid gap-3 md:grid-cols-4">
-                <div class="rounded-xl border border-white/10 bg-[#0F172A] p-4">
-                  <p class="text-xs text-[#9CA3AF]">EXIF 数据</p>
-                  <p id="metricExif" class="mt-1 text-xl font-bold text-white">-</p>
-                </div>
-                <div class="rounded-xl border border-white/10 bg-[#0F172A] p-4">
-                  <p class="text-xs text-[#9CA3AF]">物理残差</p>
-                  <p id="metricForgery" class="mt-1 text-xl font-bold text-white">-</p>
-                </div>
-                <div class="rounded-xl border border-white/10 bg-[#0F172A] p-4">
-                  <p class="text-xs text-[#9CA3AF]">AI 概率</p>
-                  <p id="metricAi" class="mt-1 text-xl font-bold text-white">-</p>
-                </div>
-                <div class="rounded-xl border border-white/10 bg-[#0F172A] p-4">
-                  <p class="text-xs text-[#9CA3AF]">结论</p>
-                  <p id="metricConclusion" class="mt-1 text-sm font-semibold text-white">-</p>
-                </div>
-              </div>
-              <button
-                id="resetBtn"
-                type="button"
-                class="mt-5 rounded-xl bg-[#2563EB] px-5 py-2 text-sm font-semibold text-white hover:bg-[#1D4ED8]"
-              >
-                检测另一张
-              </button>
-            </div>
-          </div>
+            Download TruthStamp App
+          </a>
         </div>
       </section>
 
-      <section class="mt-16 grid gap-5 md:mt-20 md:grid-cols-3">
-        <article class="rounded-xl border border-[#2563EB]/30 bg-gradient-to-br from-[#1D4ED8]/25 to-[#0A1220] p-6">
-          <h4 class="text-lg font-semibold">图像物理像素残差 (ELA)</h4>
-          <p class="mt-3 text-sm leading-6 text-[#9CA3AF]">基于误差层级分析，提取重压缩断层，定位局部拼接与涂改区域。</p>
+      <section class="mt-16 grid gap-4 md:mt-20 md:grid-cols-3">
+        <article class="rounded-lg border border-white/10 bg-card p-6">
+          <p class="text-4xl font-extrabold text-white">100%</p>
+          <h3 class="mt-3 text-lg font-semibold" data-i18n="metric1_title">True Causality</h3>
+          <p class="mt-2 text-sm leading-6 text-textsub" data-i18n="metric1_desc">
+            Secure Enclave + satellite spacetime co-signing ensures every capture is non-repudiable and tamper-evident.
+          </p>
         </article>
-        <article class="rounded-xl border border-white/10 bg-[#101826] p-6">
-          <h4 class="text-lg font-semibold">隐形盲水印 (LSB)</h4>
-          <p class="mt-3 text-sm leading-6 text-[#9CA3AF]">在感知无损前提下嵌入隐形指纹，建立来源追踪与链路追责能力。</p>
+        <article class="rounded-lg border border-white/10 bg-card p-6">
+          <p class="text-4xl font-extrabold text-white">0%</p>
+          <h3 class="mt-3 text-lg font-semibold" data-i18n="metric2_title">False Positive Rate</h3>
+          <p class="mt-2 text-sm leading-6 text-textsub" data-i18n="metric2_desc">
+            Physics-aware metadata calibration protects authentic captures from false alarms.
+          </p>
         </article>
-        <article class="rounded-xl border border-[#2563EB]/30 bg-gradient-to-br from-[#14213A]/70 to-[#0A1220] p-6">
-          <h4 class="text-lg font-semibold">AIGC 神经网络取证 (CNN)</h4>
-          <p class="mt-3 text-sm leading-6 text-[#9CA3AF]">融合频域纹理与空间残差，识别 AI 重绘、换脸与语义级篡改痕迹。</p>
+        <article class="rounded-lg border border-white/10 bg-card p-6">
+          <p class="text-4xl font-extrabold text-white">97.4%</p>
+          <h3 class="mt-3 text-lg font-semibold" data-i18n="metric3_title">AIGC Signature Extraction</h3>
+          <p class="mt-2 text-sm leading-6 text-textsub" data-i18n="metric3_desc">
+            IFAKE CNN captures generation artifacts at frequency-domain granularity, including repaint and inpainting traces.
+          </p>
         </article>
+      </section>
+
+      <section class="mt-16 md:mt-20">
+        <div class="flex snap-x snap-mandatory gap-4 overflow-x-auto pb-2">
+          <article class="min-w-[280px] flex-1 snap-start rounded-lg border border-white/10 bg-card p-6 md:min-w-0">
+            <div class="mb-4 h-28 rounded-lg border border-white/10 bg-[#141922]">
+              <svg viewBox="0 0 300 120" class="h-full w-full text-accent/60" fill="none">
+                <path d="M10 80 Q50 20 90 65 T170 55 T250 70 T290 40" stroke="currentColor" stroke-width="2" />
+                <rect x="22" y="24" width="70" height="36" rx="4" stroke="currentColor" stroke-width="1.5" />
+              </svg>
+            </div>
+            <h4 class="text-lg font-semibold" data-i18n="panel1_title">Image Physical Residuals (ELA)</h4>
+            <p class="mt-2 text-sm leading-6 text-textsub" data-i18n="panel1_desc">
+              Compression-residual fields reveal pixel discontinuities and local compositing artifacts.
+            </p>
+          </article>
+
+          <article class="min-w-[280px] flex-1 snap-start rounded-lg border border-white/10 bg-card p-6 md:min-w-0">
+            <div class="mb-4 h-28 rounded-lg border border-white/10 bg-[#141922]">
+              <svg viewBox="0 0 300 120" class="h-full w-full text-accent/60" fill="none">
+                <rect x="36" y="20" width="228" height="78" rx="4" stroke="currentColor" stroke-width="1.5" />
+                <path d="M36 52 H264 M98 20 V98 M170 20 V98" stroke="currentColor" stroke-width="1.2" />
+              </svg>
+            </div>
+            <h4 class="text-lg font-semibold" data-i18n="panel2_title">Invisible Blind Watermark (LSB)</h4>
+            <p class="mt-2 text-sm leading-6 text-textsub" data-i18n="panel2_desc">
+              Source fingerprints are embedded under perceptual transparency for trusted provenance.
+            </p>
+          </article>
+
+          <article class="min-w-[280px] flex-1 snap-start rounded-lg border border-white/10 bg-card p-6 md:min-w-0">
+            <div class="mb-4 h-28 rounded-lg border border-white/10 bg-[#141922]">
+              <svg viewBox="0 0 300 120" class="h-full w-full text-accent/60" fill="none">
+                <circle cx="78" cy="60" r="18" stroke="currentColor" stroke-width="1.5" />
+                <circle cx="150" cy="36" r="12" stroke="currentColor" stroke-width="1.5" />
+                <circle cx="220" cy="72" r="14" stroke="currentColor" stroke-width="1.5" />
+                <path d="M96 56 L138 40 L206 66" stroke="currentColor" stroke-width="1.5" />
+              </svg>
+            </div>
+            <h4 class="text-lg font-semibold" data-i18n="panel3_title">AIGC Neural Forensics (CNN)</h4>
+            <p class="mt-2 text-sm leading-6 text-textsub" data-i18n="panel3_desc">
+              Texture statistics and convolutional embeddings identify generative forgery patterns.
+            </p>
+          </article>
+        </div>
       </section>
     </main>
-
-    <style>
-      .scan-line {
-        animation: scan 1.2s linear infinite;
-      }
-      @keyframes scan {
-        0% {
-          top: 0;
-          opacity: 0.6;
-        }
-        50% {
-          opacity: 1;
-        }
-        100% {
-          top: calc(100% - 6px);
-          opacity: 0.6;
-        }
-      }
-    </style>
-
     <script>
-      const dropZone = document.getElementById("dropZone");
-      const fileInput = document.getElementById("fileInput");
-      const pickBtn = document.getElementById("pickBtn");
-      const resetBtn = document.getElementById("resetBtn");
-      const idleState = document.getElementById("idleState");
-      const loadingState = document.getElementById("loadingState");
-      const resultState = document.getElementById("resultState");
-      const scanPreview = document.getElementById("scanPreview");
-      const originalResult = document.getElementById("originalResult");
-      const heatmapResult = document.getElementById("heatmapResult");
-      const metricExif = document.getElementById("metricExif");
-      const metricForgery = document.getElementById("metricForgery");
-      const metricAi = document.getElementById("metricAi");
-      const metricConclusion = document.getElementById("metricConclusion");
+      const languageLabels = {
+        en: "English",
+        zh: "中文",
+        fr: "Français",
+        ru: "Русский",
+      };
 
-      function setState(state) {
-        idleState.classList.toggle("hidden", state !== "idle");
-        loadingState.classList.toggle("hidden", state !== "loading");
-        resultState.classList.toggle("hidden", state !== "result");
-      }
+      const translations = {
+        en: {
+          nav_docs: "Product Docs ▾",
+          nav_developers: "Developers ▾",
+          hero_title: "Secure Reality. Lock Space & Time.",
+          hero_subtitle:
+            "TruthStamp unifies hardware-grade spacetime attestation with neural residual forensics to build a verifiable, traceable, and auditable trust substrate for the AI era.",
+          hero_cta: "Download TruthStamp App",
+          metric1_title: "True Causality",
+          metric1_desc:
+            "Secure Enclave + satellite spacetime co-signing ensures every capture is non-repudiable and tamper-evident.",
+          metric2_title: "False Positive Rate",
+          metric2_desc:
+            "Physics-aware metadata calibration protects authentic captures from false alarms.",
+          metric3_title: "AIGC Signature Extraction",
+          metric3_desc:
+            "IFAKE CNN captures generation artifacts at frequency-domain granularity, including repaint and inpainting traces.",
+          panel1_title: "Image Physical Residuals (ELA)",
+          panel1_desc:
+            "Compression-residual fields reveal pixel discontinuities and local compositing artifacts.",
+          panel2_title: "Invisible Blind Watermark (LSB)",
+          panel2_desc:
+            "Source fingerprints are embedded under perceptual transparency for trusted provenance.",
+          panel3_title: "AIGC Neural Forensics (CNN)",
+          panel3_desc:
+            "Texture statistics and convolutional embeddings identify generative forgery patterns.",
+        },
+        zh: {
+          nav_docs: "产品文档 ▾",
+          nav_developers: "开发者 ▾",
+          hero_title: "Secure Reality. Lock Space & Time.",
+          hero_subtitle:
+            "TruthStamp 将硬件级时空确权与神经残差取证深度融合，构建面向 AI 时代可验证、可追溯、可审计的数字信任底座。",
+          hero_cta: "下载 TruthStamp App",
+          metric1_title: "时空绝对因果 (True Causality)",
+          metric1_desc:
+            "基于 Secure Enclave 与卫星时空协同签名，确保每次记录均不可抵赖、可验防篡改。",
+          metric2_title: "假阳性误报率 (False Positives)",
+          metric2_desc:
+            "物理先验驱动的元数据校准机制，最大化保护真实照片，避免误判。",
+          metric3_title: "AIGC 特征提取率",
+          metric3_desc:
+            "IFAKE 卷积网络在频域粒度捕捉生成痕迹，覆盖重绘、涂抹与局部修补伪造。",
+          panel1_title: "图像物理像素残差 (ELA)",
+          panel1_desc:
+            "通过重压缩残差场定位像素断层、拼接边界与局部编辑异常。",
+          panel2_title: "隐形盲水印 (LSB)",
+          panel2_desc:
+            "在感知无损前提下写入来源指纹，建立可信可追溯的证据链。",
+          panel3_title: "AIGC 神经网络取证 (CNN)",
+          panel3_desc:
+            "结合纹理统计与卷积嵌入特征，识别生成式伪造模式。",
+        },
+        fr: {
+          nav_docs: "Documentation produit ▾",
+          nav_developers: "Développeurs ▾",
+          hero_title: "Secure Reality. Lock Space & Time.",
+          hero_subtitle:
+            "TruthStamp fusionne l’attestation spatio-temporelle matérielle et la forensique résiduelle neuronale pour bâtir une couche de confiance vérifiable, traçable et auditable à l’ère de l’IA.",
+          hero_cta: "Télécharger l’app TruthStamp",
+          metric1_title: "Causalité spatio-temporelle absolue",
+          metric1_desc:
+            "Secure Enclave et co-signature satellitaire garantissent des captures non répudiables et détectables en cas d’altération.",
+          metric2_title: "Taux de faux positifs",
+          metric2_desc:
+            "Un calibrage guidé par la physique des métadonnées protège les photos authentiques contre les alertes abusives.",
+          metric3_title: "Taux d’extraction des signatures AIGC",
+          metric3_desc:
+            "Le CNN IFAKE détecte les artefacts génératifs au niveau fréquentiel, y compris retouches et inpainting.",
+          panel1_title: "Résidus physiques de pixels (ELA)",
+          panel1_desc:
+            "Les champs résiduels de compression révèlent discontinuités de pixels et montages locaux.",
+          panel2_title: "Tatouage aveugle invisible (LSB)",
+          panel2_desc:
+            "Des empreintes d’origine sont intégrées sans impact perceptible pour une provenance fiable.",
+          panel3_title: "Forensique neuronale AIGC (CNN)",
+          panel3_desc:
+            "Les statistiques de texture et embeddings convolutifs identifient les schémas de falsification générative.",
+        },
+        ru: {
+          nav_docs: "Документация ▾",
+          nav_developers: "Разработчикам ▾",
+          hero_title: "Secure Reality. Lock Space & Time.",
+          hero_subtitle:
+            "TruthStamp объединяет аппаратную пространственно-временную аттестацию и нейросетевую экспертизу остаточных артефактов, формируя проверяемый, отслеживаемый и аудируемый фундамент доверия в эпоху ИИ.",
+          hero_cta: "Скачать TruthStamp App",
+          metric1_title: "Абсолютная причинность пространства-времени",
+          metric1_desc:
+            "Secure Enclave и спутниковая ко-подпись гарантируют неотказуемость и обнаруживаемость подмены каждого кадра.",
+          metric2_title: "Уровень ложноположительных срабатываний",
+          metric2_desc:
+            "Калибровка метаданных с физическими ограничениями защищает подлинные снимки от ложных тревог.",
+          metric3_title: "Извлечение признаков AIGC",
+          metric3_desc:
+            "IFAKE CNN фиксирует генеративные артефакты на частотном уровне, включая дорисовку и inpainting.",
+          panel1_title: "Физические пиксельные остатки (ELA)",
+          panel1_desc:
+            "Поля компрессионных остатков выявляют разрывы пикселей и локальные композитные вмешательства.",
+          panel2_title: "Невидимый слепой водяной знак (LSB)",
+          panel2_desc:
+            "Отпечатки источника встраиваются без визуальных потерь для доверенной атрибуции происхождения.",
+          panel3_title: "Нейросетевая криминалистика AIGC (CNN)",
+          panel3_desc:
+            "Статистика текстур и сверточные эмбеддинги обнаруживают паттерны генеративной фальсификации.",
+        },
+      };
 
-      function resetSandbox() {
-        fileInput.value = "";
-        scanPreview.src = "";
-        originalResult.src = "";
-        heatmapResult.src = "";
-        metricExif.textContent = "-";
-        metricForgery.textContent = "-";
-        metricAi.textContent = "-";
-        metricConclusion.textContent = "-";
-        setState("idle");
-      }
-
-      async function runDetection(file) {
-        if (!file) return;
-        setState("loading");
-        const objectUrl = URL.createObjectURL(file);
-        scanPreview.src = objectUrl;
-
-        try {
-          const formData = new FormData();
-          formData.append("file", file);
-          const response = await fetch("/api/detect", {
-            method: "POST",
-            body: formData,
-          });
-
-          const payload = await response.json();
-          if (!response.ok) {
-            throw new Error(payload?.detail || payload?.error || "检测失败");
+      function changeLanguage(lang) {
+        const dictionary = translations[lang] || translations.en;
+        document.querySelectorAll("[data-i18n]").forEach((element) => {
+          const key = element.getAttribute("data-i18n");
+          if (dictionary[key]) {
+            element.textContent = dictionary[key];
           }
+        });
 
-          const aiScore = payload?.details?.ai_score ?? 0;
-          const conclusion = payload?.conclusion || payload?.details?.conclusion || (payload?.is_forgery ? "疑似局部修改" : "安全 (未见篡改)");
-
-          originalResult.src = objectUrl;
-          heatmapResult.src = `data:image/png;base64,${payload.heatmap_image}`;
-          metricExif.textContent = `${payload.metadata_score ?? 0}/100`;
-          metricForgery.textContent = `${payload.forgery_score ?? 0}/100`;
-          metricAi.textContent = `${aiScore}%`;
-          metricConclusion.textContent = conclusion;
-          setState("result");
-        } catch (error) {
-          alert(error.message || "检测失败，请稍后重试。");
-          URL.revokeObjectURL(objectUrl);
-          setState("idle");
-        }
+        const label = languageLabels[lang] || languageLabels.en;
+        document.getElementById("current-language-label").textContent = label;
+        document.documentElement.lang = lang;
+        localStorage.setItem("preferred_language", lang);
       }
 
-      dropZone.addEventListener("dragover", (event) => {
-        event.preventDefault();
-        dropZone.classList.add("border-[#2563EB]", "bg-[#0D1526]");
+      function initLanguage() {
+        const saved = localStorage.getItem("preferred_language");
+        const initial = saved && translations[saved] ? saved : "en";
+        changeLanguage(initial);
+      }
+
+      const languageToggle = document.getElementById("language-toggle");
+      const languageMenu = document.getElementById("language-menu");
+
+      languageToggle.addEventListener("click", () => {
+        languageMenu.classList.toggle("hidden");
       });
 
-      dropZone.addEventListener("dragleave", () => {
-        dropZone.classList.remove("border-[#2563EB]", "bg-[#0D1526]");
+      document.querySelectorAll("[data-language-option]").forEach((option) => {
+        option.addEventListener("click", () => {
+          const lang = option.getAttribute("data-language-option");
+          changeLanguage(lang);
+          languageMenu.classList.add("hidden");
+        });
       });
 
-      dropZone.addEventListener("drop", (event) => {
-        event.preventDefault();
-        dropZone.classList.remove("border-[#2563EB]", "bg-[#0D1526]");
-        const file = event.dataTransfer?.files?.[0];
-        runDetection(file);
+      document.addEventListener("click", (event) => {
+        if (!languageToggle.contains(event.target) && !languageMenu.contains(event.target)) {
+          languageMenu.classList.add("hidden");
+        }
       });
 
-      pickBtn.addEventListener("click", () => fileInput.click());
-      fileInput.addEventListener("change", (event) => runDetection(event.target.files?.[0]));
-      resetBtn.addEventListener("click", resetSandbox);
+      initLanguage();
     </script>
   </body>
 </html>
