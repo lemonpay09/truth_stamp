@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:camera/camera.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../services/verification_history_service.dart';
 import 'tabs/camera_tab.dart';
@@ -37,6 +38,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
   void _setIndex(int index) {
     if (index == _currentIndex) return;
+    HapticFeedback.selectionClick();
     setState(() => _currentIndex = index);
   }
 

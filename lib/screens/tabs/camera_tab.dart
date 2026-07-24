@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
@@ -173,6 +174,7 @@ class _CameraTabState extends State<CameraTab> {
         _isProcessing = false;
         _progressMessage = null;
       });
+      await HapticFeedback.mediumImpact();
 
       await _showResultSheet(result);
     } on Exception catch (error) {

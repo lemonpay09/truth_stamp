@@ -1,15 +1,17 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../models/verification_record.dart';
 import '../../services/thumbnail_service.dart';
+import '../../services/usage_limit_service.dart';
 import '../../services/verification_history_service.dart';
+import '../auth/paywall_screen.dart';
 import '../verification_detail_screen.dart';
 
 class VerifyTab extends StatefulWidget {
@@ -29,6 +31,7 @@ class _VerifyTabState extends State<VerifyTab> {
 
   final ImagePicker _imagePicker = ImagePicker();
   final ThumbnailService _thumbnailService = const ThumbnailService();
+  final UsageLimitService _usageLimitService = const UsageLimitService();
   late final VoidCallback _historyListener;
 
   bool _isBusy = false;
@@ -58,6 +61,13 @@ class _VerifyTabState extends State<VerifyTab> {
 
   Future<void> _importAndVerify() async {
     if (_isBusy) return;
+    final decision = await _usageLimitService.evaluate();
+    if (!decision.allowed) {
+      await HapticFeedback.mediumImpact();
+      if (!mounted) return;
+      await showProPaywall(context, dailyCount: decision.todayCount);
+      return;
+    }
 
     final picked = await _imagePicker.pickImage(source: ImageSource.gallery);
     if (picked == null) return;
@@ -76,6 +86,7 @@ class _VerifyTabState extends State<VerifyTab> {
     });
 
     try {
+      await _usageLimitService.consume(decision);
       final thumbnailBase64 =
           await _thumbnailService.generateTinyThumbnailBase64(file);
       final result = await _detectWithDetector(file);
@@ -105,6 +116,8 @@ class _VerifyTabState extends State<VerifyTab> {
         aiScore: result.aiScore.toString(),
       );
 
+      if (!mounted) return;
+      await HapticFeedback.lightImpact();
       if (!mounted) return;
       await Navigator.of(context).push(
         MaterialPageRoute(

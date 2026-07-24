@@ -269,8 +269,25 @@ class _ProfileTabState extends State<ProfileTab> {
     );
   }
 
-  Widget _authHeaderCard(User user) {
+  Widget _authHeaderCard(User user, String role) {
     final maskedIdentity = _maskIdentity(user);
+    final isFounder = role == 'Founder';
+    final isPro = role == 'Pro' || isFounder;
+    final badgeText = isFounder
+        ? 'Founder 创始会员'
+        : isPro
+            ? 'PRO 会员'
+            : 'Free 用户';
+    final badgeGradient = isFounder
+        ? const [Color(0xFFFFF6CC), Color(0xFFE8D48C), Color(0xFFFFF2B1)]
+        : isPro
+            ? const [Color(0xFFDBEAFE), Color(0xFFBFDBFE), Color(0xFF93C5FD)]
+            : const [Color(0xFFF1F5F9), Color(0xFFE2E8F0), Color(0xFFCBD5E1)];
+    final badgeColor = isFounder
+        ? const Color(0xFF6B5317)
+        : isPro
+            ? const Color(0xFF1E3A8A)
+            : const Color(0xFF334155);
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -333,13 +350,7 @@ class _ProfileTabState extends State<ProfileTab> {
           Container(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(16),
-              gradient: const LinearGradient(
-                colors: [
-                  Color(0xFFFFF6CC),
-                  Color(0xFFE8D48C),
-                  Color(0xFFFFF2B1),
-                ],
-              ),
+              gradient: LinearGradient(colors: badgeGradient),
               boxShadow: const [
                 BoxShadow(
                   color: Color(0x33D4AF37),
@@ -349,17 +360,24 @@ class _ProfileTabState extends State<ProfileTab> {
               ],
             ),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-            child: const Row(
+            child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.workspace_premium_rounded,
-                    size: 16, color: Color(0xFF8A6D1D)),
-                SizedBox(width: 6),
+                Icon(
+                  isFounder
+                      ? Icons.workspace_premium_rounded
+                      : isPro
+                          ? Icons.verified_rounded
+                          : Icons.shield_outlined,
+                  size: 16,
+                  color: badgeColor,
+                ),
+                const SizedBox(width: 6),
                 Text(
-                  'PRO 创始会员',
+                  badgeText,
                   style: TextStyle(
                     fontWeight: FontWeight.w800,
-                    color: Color(0xFF6B5317),
+                    color: badgeColor,
                   ),
                 ),
               ],
@@ -370,12 +388,12 @@ class _ProfileTabState extends State<ProfileTab> {
     );
   }
 
-  Widget _buildBody(User? user) {
+  Widget _buildBody(User? user, {required String role}) {
     final isLoggedIn = user != null;
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
       children: [
-        isLoggedIn ? _authHeaderCard(user) : _unauthHeaderCard(),
+        isLoggedIn ? _authHeaderCard(user, role) : _unauthHeaderCard(),
         const SizedBox(height: 16),
         _bentoTile(
           icon: CupertinoIcons.lock_shield_fill,
@@ -417,7 +435,7 @@ class _ProfileTabState extends State<ProfileTab> {
     if (stream == null) {
       return Scaffold(
         backgroundColor: const Color(0xFFF7F8FA),
-        body: SafeArea(child: _buildBody(null)),
+        body: SafeArea(child: _buildBody(null, role: 'Free')),
       );
     }
 
@@ -428,7 +446,23 @@ class _ProfileTabState extends State<ProfileTab> {
           stream: stream,
           builder: (context, snapshot) {
             final user = snapshot.data?.session?.user ?? client?.auth.currentUser;
-            return _buildBody(user);
+            if (user == null) {
+              return _buildBody(null, role: 'Free');
+            }
+            final roleStream = client!
+                .from('app_users')
+                .stream(primaryKey: ['user_id'])
+                .eq('user_id', user.id);
+            return StreamBuilder<List<Map<String, dynamic>>>(
+              stream: roleStream,
+              builder: (context, roleSnapshot) {
+                final roleRow = roleSnapshot.data?.isNotEmpty == true
+                    ? roleSnapshot.data!.first
+                    : null;
+                final role = roleRow?['role']?.toString() ?? 'Free';
+                return _buildBody(user, role: role);
+              },
+            );
           },
         ),
       ),
