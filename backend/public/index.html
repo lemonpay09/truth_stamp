@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TruthStamp | Secure Reality</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              inter: ["Inter", "sans-serif"],
+            },
+          },
+        },
+      };
+    </script>
+  </head>
+  <body class="min-h-screen bg-[#05070B] font-inter text-white antialiased">
+    <div class="pointer-events-none fixed inset-0 -z-10">
+      <div class="absolute left-1/2 top-[-10rem] h-80 w-80 -translate-x-1/2 rounded-full bg-[#1E40AF]/30 blur-3xl"></div>
+      <div class="absolute bottom-[-8rem] right-[-8rem] h-72 w-72 rounded-full bg-[#00FF87]/10 blur-3xl"></div>
+    </div>
+
+    <header class="mx-auto w-full max-w-7xl px-5 py-5 md:px-8">
+      <nav class="flex items-center justify-between rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-3 backdrop-blur-xl md:px-6">
+        <a href="#" class="flex items-center gap-2">
+          <span class="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-[#60EFFF] to-[#00FF87] text-black">
+            <svg viewBox="0 0 24 24" class="h-5 w-5" fill="currentColor" aria-hidden="true">
+              <path d="M12 2 4 5v6c0 5 3.4 9.4 8 10.7 4.6-1.3 8-5.7 8-10.7V5l-8-3Zm0 5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z" />
+            </svg>
+          </span>
+          <span class="text-lg font-semibold tracking-tight">TruthStamp</span>
+        </a>
+        <div class="hidden items-center gap-7 text-sm text-white/75 md:flex">
+          <a href="#" class="hover:text-white">技术白皮书</a>
+          <a href="#" class="hover:text-white">发展路线图</a>
+          <a
+            href="/admin"
+            class="rounded-full border border-white/20 bg-white/5 px-4 py-2 font-medium text-white transition hover:border-[#60EFFF]/60 hover:bg-[#1E40AF]/25"
+            >进入管理后台</a
+          >
+        </div>
+      </nav>
+    </header>
+
+    <main class="mx-auto w-full max-w-7xl px-5 pb-20 md:px-8">
+      <section class="pt-10 md:pt-16">
+        <div class="max-w-4xl">
+          <p class="text-sm font-medium uppercase tracking-[0.22em] text-[#60EFFF]">Reality Infrastructure</p>
+          <h1 class="mt-5 text-4xl font-extrabold leading-tight md:text-6xl">
+            Secure Reality.
+            <br />
+            Lock Space &amp; Time.
+          </h1>
+          <h2 class="mt-5 text-xl font-semibold text-white/95 md:text-2xl">时空物理确权，捍卫数字世界的真实底座。</h2>
+          <p class="mt-6 max-w-3xl text-base leading-7 text-white/65 md:text-lg">
+            TruthStamp 是一个将“主动物理相机确权”与“被动像素级 AI 取证”融为一体的真实性资产网络，重塑 AI 时代的信息互信。
+          </p>
+          <div class="mt-9 flex flex-wrap gap-4">
+            <a
+              href="#"
+              class="rounded-2xl bg-[#1E40AF] px-6 py-3 text-sm font-semibold text-white shadow-[0_0_32px_rgba(30,64,175,0.45)] transition hover:bg-[#1B3A99]"
+              >进入鉴伪沙盒</a
+            >
+            <a
+              href="#"
+              class="rounded-2xl border border-white/20 bg-white/5 px-6 py-3 text-sm font-semibold text-white/90 transition hover:border-[#60EFFF]/50 hover:text-white"
+              >下载手机 App</a
+            >
+          </div>
+        </div>
+      </section>
+
+      <section class="mt-16 grid gap-5 md:mt-20 md:grid-cols-3">
+        <article class="rounded-3xl border border-white/10 bg-[#111827]/85 p-6">
+          <p class="text-4xl font-extrabold text-[#60EFFF]">100%</p>
+          <h3 class="mt-3 text-lg font-semibold">时空绝对因果 (True Causality)</h3>
+          <p class="mt-2 text-sm leading-6 text-white/65">
+            基于手机硬件安全芯片(SE)与 GPS 卫星时空多维数据混合锁定
+          </p>
+        </article>
+        <article class="rounded-3xl border border-white/10 bg-[#111827]/85 p-6">
+          <p class="text-4xl font-extrabold text-[#00FF87]">0%</p>
+          <h3 class="mt-3 text-lg font-semibold">假阳性误报率 (False Positives)</h3>
+          <p class="mt-2 text-sm leading-6 text-white/65">
+            通过物理元数据加权门限自适应算法，100% 保护真实照片免受误伤
+          </p>
+        </article>
+        <article class="rounded-3xl border border-white/10 bg-[#111827]/85 p-6">
+          <p class="text-4xl font-extrabold text-[#60EFFF]">97.4%</p>
+          <h3 class="mt-3 text-lg font-semibold">AIGC 特征提取率</h3>
+          <p class="mt-2 text-sm leading-6 text-white/65">
+            自主研发 IFAKE 卷积神经网络，捕获图像频域级微观生成痕迹
+          </p>
+        </article>
+      </section>
+
+      <section class="mt-16 grid gap-5 md:mt-20 md:grid-cols-3">
+        <article class="rounded-3xl border border-[#60EFFF]/20 bg-gradient-to-br from-[#1E40AF]/30 to-[#0A1220] p-6 shadow-[0_0_40px_rgba(96,239,255,0.08)]">
+          <h4 class="text-lg font-semibold">图像物理像素残差 (ELA)</h4>
+          <p class="mt-3 text-sm leading-6 text-white/70">基于误差层级分析，提取重压缩断层，定位局部拼接与涂改区域。</p>
+        </article>
+        <article class="rounded-3xl border border-[#00FF87]/20 bg-gradient-to-br from-[#0f2a21]/70 to-[#0A1220] p-6 shadow-[0_0_40px_rgba(0,255,135,0.08)]">
+          <h4 class="text-lg font-semibold">隐形盲水印 (LSB)</h4>
+          <p class="mt-3 text-sm leading-6 text-white/70">在感知无损前提下嵌入隐形指纹，建立来源追踪与链路追责能力。</p>
+        </article>
+        <article class="rounded-3xl border border-[#60EFFF]/20 bg-gradient-to-br from-[#10223a]/80 to-[#0A1220] p-6 shadow-[0_0_40px_rgba(30,64,175,0.2)]">
+          <h4 class="text-lg font-semibold">AIGC 神经网络取证 (CNN)</h4>
+          <p class="mt-3 text-sm leading-6 text-white/70">融合频域纹理与空间残差，识别 AI 重绘、换脸与语义级篡改痕迹。</p>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>
